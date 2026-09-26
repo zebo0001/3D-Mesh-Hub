@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>3D-Datei-Archiv</title>
+  <script>
+    // Vor dem Stylesheet ausgefuehrt, damit beim Laden nicht kurz das falsche
+    // Theme aufblitzt ("Flash of wrong theme"). 'system' (Standard) setzt
+    // bewusst KEIN Attribut - das erledigt dann die @media-Regel in style.css.
+    (function () {
+      try {
+        var pref = localStorage.getItem('theme');
+        if (pref === 'light' || pref === 'dark') {
+          document.documentElement.setAttribute('data-theme', pref);
+        }
+      } catch (err) { /* localStorage evtl. blockiert - bleibt beim Standard */ }
+    })();
+  </script>
+  <link rel="stylesheet" href="/css/style.css" />
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "/vendor/three/build/three.module.js",
+      "three/addons/": "/vendor/three/jsm/"
+    }
+  }
+  </script>
+</head>
+<body>
+  <div class="page">
+    <header class="hero">
+      <button id="btn-libraries" class="btn-settings">⚙ Bibliotheken</button>
+      <div class="hero-brand">
+        <div class="brand-icon" aria-hidden="true">
+          <svg viewBox="0 0 48 48" width="40" height="40">
+            <polygon points="24,6 40,15 40,33 24,42 8,33 8,15" fill="none" stroke="url(#g)" stroke-width="2.5"/>
+            <line x1="24" y1="6" x2="24" y2="24" stroke="url(#g)" stroke-width="2.5"/>
+            <line x1="8" y1="15" x2="24" y2="24" stroke="url(#g)" stroke-width="2.5"/>
+            <line x1="40" y1="15" x2="24" y2="24" stroke="url(#g)" stroke-width="2.5"/>
+            <line x1="24" y1="24" x2="24" y2="42" stroke="url(#g)" stroke-width="2.5"/>
+            <defs>
+              <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+                <stop offset="0" stop-color="#5b8ef5"/>
+                <stop offset="1" stop-color="#9b6bf0"/>
+              </linearGradient>
+            </defs>
+          </svg>
+        </div>
+        <h1>3D-<span class="accent-text">Datei</span>-Archiv</h1>
+      </div>
+      <p class="hero-subtitle">Eigenes STL/3MF/STEP-Archiv im Blick — durchsuchen, drehen, zoomen, eigene Notizen &amp; Tags</p>
+    </header>
+
+    <section class="stats" id="stats">
+      <div class="stat-card"><div class="stat-value" id="stat-folders">–</div><div class="stat-label">Ordner</div></div>
+      <div class="stat-card"><div class="stat-value" id="stat-total">–</div><div class="stat-label">Alle Dateien</div></div>
+      <div class="stat-card"><div class="stat-value" id="stat-stl">–</div><div class="stat-label">STL</div></div>
+      <div class="stat-card"><div class="stat-value" id="stat-3mf">–</div><div class="stat-label">3MF</div></div>
+      <div class="stat-card"><div class="stat-value" id="stat-obj">–</div><div class="stat-label">OBJ</div></div>
+    </section>
+
+    <section class="toolbar">
+      <input type="search" id="search-input" placeholder="Ordner und Dateien durchsuchen…" />
+      <div class="toolbar-group">
+        <button class="view-toggle active" id="btn-view-folders">Ordner</button>
+        <button class="view-toggle" id="btn-view-files">Dateien</button>
+      </div>
+      <select id="sort-select">
+        <option value="name">Name A–Z</option>
+        <option value="date">Zuletzt geändert</option>
+        <option value="size">Größte zuerst</option>
+      </select>
+      <button id="btn-scan" class="btn-primary">↻ Neu scannen</button>
+      <span id="scan-status" class="hint"></span>
+    </section>
+
+    <main class="content">
+      <div class="breadcrumb hint" id="breadcrumb" hidden></div>
+      <div class="grid" id="grid">
+        <p class="hint">Lade…</p>
+      </div>
+    </main>
+  </div>
+
+  <!-- Schwebende Fortschrittsanzeige waehrend Thumbnails im Hintergrund gerendert werden -->
+  <div class="thumb-progress" id="thumb-progress" hidden>
+    <span class="spinner" aria-hidden="true"></span>
+    <span id="thumb-progress-text">Vorschaubilder werden geladen…</span>
+  </div>
+
+  <!-- Detail-/Viewer-Overlay -->
+  <div class="overlay" id="overlay" hidden>
+    <div class="overlay-panel">
+      <button class="overlay-close" id="btn-close-detail">✕</button>
+      <div id="detail"></div>
+    </div>
+  </div>
+
+  <!-- Bibliotheks-Dialog: Ordnerauswahl innerhalb des gemounteten Datenordners -->
+  <dialog id="dlg-libraries">
+    <h2>Bibliotheken (Unterordner von /data)</h2>
+    <p class="hint">
+      Der gesamte gemountete Ordner ist unter <code>/data</code> sichtbar.
+      Wähle hier die Unterordner aus, die durchsucht werden sollen.
+    </p>
+    <div id="lib-current-path"></div>
+    <ul id="lib-browser" class="browser-list"></ul>
+    <div class="dlg-actions">
+      <ul id="lib-list" class="lib-list"></ul>
+
+      <div class="settings-row">
+        <label for="scan-interval-select">Automatischer Hintergrund-Scan alle:</label>
+        <select id="scan-interval-select"></select>
+        <p class="hint">
+          Prüft periodisch auf neue/geänderte/entfernte Dateien und erzeugt fehlende
+          Vorschaubilder direkt im Hintergrund (siehe README). Eine Änderung greift
+          spätestens beim nächsten Durchlauf, kein Neustart nötig.
+        </p>
+      </div>
+
+      <div class="settings-row">
+        <label for="theme-select">Darstellung:</label>
+        <select id="theme-select">
+          <option value="system">System</option>
+          <option value="dark">Dunkel</option>
+          <option value="light">Hell</option>
+        </select>
+      </div>
+
+      <div class="settings-row">
+        <label class="inline-check">
+          <input type="checkbox" id="thumbnails-enabled-check" />
+          Vorschaubilder automatisch erzeugen
+        </label>
+        <p class="hint">
+          Bei sehr großen Archiven kann das Rendern der Vorschaubilder spürbar CPU
+          beanspruchen. Deaktiviert lässt die App Dateien nur mit Platzhalter anzeigen.
+        </p>
+      </div>
+
+      <button id="btn-close-libraries">Schließen</button>
+    </div>
+  </dialog>
+
+  <script type="module" src="/js/viewer.js"></script>
+  <script type="module" src="/js/app.js"></script>
+</body>
+</html>

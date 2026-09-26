@@ -1,0 +1,22 @@
+services:
+  3d-datei-archiv:
+    build: .
+    container_name: 3d-datei-archiv
+    restart: unless-stopped
+    shm_size: '1gb'  # Chromium (Thumbnail-Rendering) braucht mehr als das Docker-Standard-/dev/shm
+    ports:
+      - "${APP_PORT:-3000}:3000"
+    volumes:
+      # Dein 3D-Dateien-Ordner, read-only eingebunden (die App schreibt hier nichts hinein)
+      - ${DATA_ROOT:-./beispiel-daten}:/data:ro
+      # Eigene Datenbank (Tags/Notizen/Bibliotheks-Auswahl) - bleibt unabhaengig vom Datenordner erhalten
+      - app-db:/app/db
+    environment:
+      - PORT=3000
+      - DATA_ROOT=/data
+      - DB_PATH=/app/db/archiv.sqlite
+      - THUMB_MAX_SIZE_MB=${THUMB_MAX_SIZE_MB:-40}
+      - GPU_ACCEL=${GPU_ACCEL:-false}
+
+volumes:
+  app-db:

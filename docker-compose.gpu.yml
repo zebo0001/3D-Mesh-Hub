@@ -1,0 +1,32 @@
+# Experimentelle GPU-Beschleunigung fuer das Thumbnail-Rendering (opt-in).
+#
+# Standardmaessig rendert die App Thumbnails per Software (SwiftShader) - das
+# funktioniert auf JEDEM System, ist aber bei grossen/komplexen Dateien
+# irgendwann zu langsam (siehe README). Wer eine NVIDIA-GPU hat UND unter
+# Docker Desktop bereits GPU-Zugriff fuer andere Container funktioniert
+# (z.B. Frigate, andere CUDA-Workloads), kann das hier testen.
+#
+# Nutzung (zusaetzlich zur normalen docker-compose.yml, nicht stattdessen):
+#   1. In der .env: GPU_ACCEL=true setzen
+#   2. docker compose -f docker-compose.yml -f docker-compose.gpu.yml up --build -d
+#
+# WICHTIG - ehrlich gesagt experimentell:
+# - Nur getestet/relevant fuer NVIDIA-GPUs. Ohne passende GPU oder ohne
+#   funktionierenden GPU-Zugriff in Docker Desktop startet der Container mit
+#   dieser Datei GAR NICHT (Docker kann die angeforderte GPU nicht finden).
+#   Deshalb als SEPARATE Datei, nicht Teil der normalen docker-compose.yml.
+# - NVIDIA-GPU-Zugriff in Docker Desktop (WSL2) ist fuer Video-Decoding/CUDA
+#   (z.B. Frigate) gut erprobt. Ob dieselbe Anbindung fuer echtes
+#   WebGL-Rendering durch Chromium (was wir hier brauchen) genauso
+#   zuverlaessig funktioniert, ist weniger dokumentiert - daher der Test.
+# - server/thumbnails.js faellt automatisch auf Software-Rendering zurueck,
+#   falls der GPU-Start von Chromium fehlschlaegt (siehe Log-Meldung).
+services:
+  3d-datei-archiv:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]

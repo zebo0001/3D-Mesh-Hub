@@ -180,6 +180,30 @@ config (a system without a matching GPU wouldn't even start with
 in `server/thumbnails.js` if Chromium's GPU startup fails (see log:
 "GPU startup failed, falling back to software rendering").
 
+## "Open on PC": open the file's location in Explorer (Windows, optional)
+
+The detail view has an **"Open on PC"** button that highlights the file in
+Windows Explorer, or opens it in its associated default program (e.g. your
+slicer).
+
+**Why a one-time local setup is needed:** for security reasons, browsers
+can't launch local programs from a regular website - current Chrome/Edge
+versions even block `file://` links from `http(s)` pages outright ("Not
+allowed to load local resource"). The fix is a custom URL protocol
+(`meshhub://`), the same mechanism `vscode://` or `zoommtg://` use - this
+needs a small, free helper script installed once on your PC.
+
+**Setup (Windows only, ~30 seconds):**
+1. In the app, click the `?` next to "Open on PC" -> download link.
+2. Unzip, right-click `install.ps1` -> "Run with PowerShell".
+3. Done. Runs entirely in your own Windows user context (`HKCU`) - **no admin
+   rights needed**, no real installation, just a registry entry (fully
+   reversible any time). Source is open under `windows-helper/` in the repo.
+
+Without this setup the button simply doesn't appear (no absolute
+`DATA_ROOT` path set in `.env`), or does nothing when clicked. macOS/Linux
+are not currently supported.
+
 ## Filament amount tracking
 
 The detail form lets you record the filament amount needed per file — as a

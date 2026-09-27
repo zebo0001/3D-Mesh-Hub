@@ -73,10 +73,11 @@ body {
   color: transparent;
 }
 .hero-subtitle { color: var(--muted); font-size: 0.9rem; margin: 0.4rem 0 0; }
+.settings-toggle { position: absolute; top: 1.25rem; right: 0; display: flex; gap: 0.5rem; }
 .btn-settings {
-  position: absolute; top: 1.25rem; right: 0;
   background: var(--panel); color: var(--text); border: 1px solid var(--border);
   border-radius: 8px; padding: 0.5rem 0.9rem; cursor: pointer; font-size: 0.85rem;
+  white-space: nowrap;
 }
 .btn-settings:hover { border-color: var(--accent); }
 
@@ -222,6 +223,32 @@ table.meta-table td:first-child { color: var(--muted); width: 40%; }
 }
 .notes-form .btn-secondary:hover { border-color: var(--accent); }
 #filament-total { font-weight: 600; color: var(--accent-2); }
+
+.btn-open-local {
+  display: inline-block; margin-left: 0.6rem; background: var(--panel-2); color: var(--text);
+  border: 1px solid var(--border); border-radius: 8px; padding: 0.2rem 0.6rem;
+  font-weight: 500; font-size: 0.75rem; text-decoration: none; cursor: pointer;
+}
+.btn-open-local:hover { border-color: var(--accent); color: var(--accent); }
+
+.btn-help-toggle {
+  display: inline-flex; align-items: center; justify-content: center; margin-left: 0.35rem;
+  width: 1.4rem; height: 1.4rem; border-radius: 50%; background: var(--panel-2);
+  color: var(--muted); border: 1px solid var(--border); font-size: 0.75rem; font-weight: 600;
+  cursor: pointer; padding: 0; vertical-align: middle;
+}
+.btn-help-toggle:hover { color: var(--text); border-color: var(--accent); }
+
+.open-local-hint {
+  display: inline-block; margin: 0.3rem 0 0.6rem; padding: 0.35rem 0.6rem; border-radius: 8px;
+  background: var(--panel-2); border: 1px solid var(--border); font-size: 0.78rem; color: var(--muted);
+}
+
+#dlg-info { max-width: 32rem; }
+#dlg-info h3 { margin: 1.2rem 0 0.3rem; font-size: 0.95rem; color: var(--accent-2); }
+#dlg-info h3:first-of-type { margin-top: 0.5rem; }
+#dlg-info p { margin: 0.35rem 0; font-size: 0.88rem; line-height: 1.5; }
+#dlg-info .btn-secondary { display: inline-block; margin: 0.4rem 0 0.6rem; }
 
 /* ---- Bibliotheks-Dialog ---- */
 dialog { background: var(--panel); color: var(--text); border: 1px solid var(--border); border-radius: var(--radius); width: min(560px, 90vw); }

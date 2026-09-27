@@ -308,16 +308,21 @@ function renderDetail(f) {
   const filamentRows = (f.filament && f.filament.length ? f.filament : [{ color: '', grams: '' }])
     .map(filamentRowHtml).join('');
 
+  const openLocalCell = f.local_file_url
+    ? `<a class="btn-secondary btn-open-local" href="${escapeAttr(f.local_file_url)}">${t('detail.openLocal')}</a><button type="button" class="btn-help-toggle" id="btn-open-local-help" title="${t('detail.openLocalHelp')}">?</button>`
+    : '';
+
   detailEl.innerHTML = `
     <h2>${escapeHtml(f.filename)}</h2>
     <div id="viewer-canvas-wrap"></div>
     <table class="meta-table">
-      <tr><td>${t('detail.path')}</td><td>${escapeHtml(f.rel_path)}</td></tr>
+      <tr><td>${t('detail.path')}</td><td>${escapeHtml(f.rel_path)}${openLocalCell}</td></tr>
       <tr><td>${t('detail.size')}</td><td>${formatBytes(f.size_bytes)}</td></tr>
       <tr><td>${t('detail.modified')}</td><td>${new Date(f.mtime).toLocaleString(localeTag())}</td></tr>
       ${geoRows}
       ${metaRows}
     </table>
+    ${f.local_file_url ? `<div class="open-local-hint" id="open-local-hint" hidden>${t('detail.openLocalHintPointer')}</div>` : ''}
     <form class="notes-form" id="notes-form">
       <label>${t('form.status')}
         <input name="status" value="${escapeAttr(f.status)}" placeholder="${t('form.statusPlaceholder')}" />
@@ -391,6 +396,16 @@ function renderDetail(f) {
     if (idx >= 0) Object.assign(allFiles[idx], body);
   });
 
+  const openLocalHelpBtn = document.getElementById('btn-open-local-help');
+  if (openLocalHelpBtn) {
+    openLocalHelpBtn.addEventListener('click', () => {
+      const hintEl = document.getElementById('open-local-hint');
+      hintEl.hidden = false;
+      clearTimeout(openLocalHelpBtn._hintTimer);
+      openLocalHelpBtn._hintTimer = setTimeout(() => { hintEl.hidden = true; }, 4000);
+    });
+  }
+
   if (!f.missing) loadIntoViewer('viewer-canvas-wrap', f.id, f.ext, f.size_bytes, f.mesh_version || 0);
 }
 
@@ -452,6 +467,11 @@ themeSelectEl.addEventListener('change', () => {
   else document.documentElement.setAttribute('data-theme', val);
 });
 document.getElementById('btn-close-libraries').addEventListener('click', () => dlg.close());
+
+// ---- Info-Dialog (Feature-Hinweis, Was-macht-die-App, Repo-Link) ----
+const dlgInfo = document.getElementById('dlg-info');
+document.getElementById('btn-info').addEventListener('click', () => dlgInfo.showModal());
+document.getElementById('btn-close-info').addEventListener('click', () => dlgInfo.close());
 
 // ---- Scan-Intervall (periodischer Hintergrund-Scan, siehe README) ----
 const scanIntervalSelectEl = document.getElementById('scan-interval-select');

@@ -181,6 +181,32 @@ automatischer Fallback auf Software-Rendering in `server/thumbnails.js`, falls d
 GPU-Start von Chromium fehlschlaegt (siehe Log: "GPU-Start fehlgeschlagen, falle zurueck
 auf Software-Rendering").
 
+## "Am PC öffnen": Datei-Standort im Explorer öffnen (Windows, optional)
+
+In der Detail-Ansicht gibt es einen Button **"Am PC öffnen"**, der die Datei im
+Windows Explorer markiert bzw. im zugeordneten Standardprogramm (z.B. deinem
+Slicer) öffnet.
+
+**Warum ein einmaliges lokales Setup nötig ist:** Browser dürfen aus einer
+normalen Website heraus aus Sicherheitsgründen keine lokalen Programme
+starten - aktuelle Chrome-/Edge-Versionen blockieren sogar `file://`-Links von
+`http(s)`-Seiten komplett ("Not allowed to load local resource"). Die Lösung
+ist ein eigenes URL-Protokoll (`meshhub://`), derselbe Mechanismus, den z.B.
+`vscode://` oder `zoommtg://` nutzen - dafür braucht es einmalig ein kleines,
+kostenloses Helferskript auf deinem PC.
+
+**Setup (nur Windows, ca. 30 Sekunden):**
+1. In der App auf das `?` neben "Am PC öffnen" klicken -> Download-Link.
+2. ZIP entpacken, `install.ps1` per Rechtsklick -> "Mit PowerShell ausführen".
+3. Fertig. Läuft komplett im Kontext deines Windows-Benutzers (`HKCU`) - **keine
+   Adminrechte nötig**, keine echte Installation, nur ein Registry-Eintrag
+   (jederzeit rückgängig machbar). Quelle liegt offen unter `windows-helper/`
+   im Repo.
+
+Ohne dieses Setup erscheint der Button einfach nicht (kein absoluter
+`DATA_ROOT`-Pfad in der `.env` gesetzt) bzw. tut beim Klick nichts.
+macOS/Linux werden aktuell nicht unterstützt.
+
 ## Filament-Mengen-Erfassung
 
 Im Detail-Formular kann pro Datei die benötigte Filamentmenge erfasst werden - als Liste

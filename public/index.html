@@ -35,7 +35,10 @@
 <body>
   <div class="page">
     <header class="hero">
-      <button id="btn-libraries" class="btn-settings" data-i18n="header.libraries">⚙ Bibliotheken</button>
+      <div class="settings-toggle">
+        <button id="btn-libraries" class="btn-settings" data-i18n="header.libraries">⚙ Bibliotheken</button>
+        <button id="btn-info" class="btn-settings" data-i18n="header.info">ℹ Info</button>
+      </div>
       <div class="lang-toggle" id="lang-toggle">
         <button class="lang-btn" id="btn-lang-de" title="Deutsch" aria-label="Deutsch"><svg viewBox="0 0 5 3" width="20" height="14" aria-hidden="true"><rect width="5" height="1" y="0" fill="#000"/><rect width="5" height="1" y="1" fill="#DD0000"/><rect width="5" height="1" y="2" fill="#FFCE00"/></svg></button>
         <button class="lang-btn" id="btn-lang-en" title="English" aria-label="English"><svg viewBox="0 0 60 36" width="20" height="14" aria-hidden="true"><rect width="60" height="36" fill="#00247d"/><path d="M0,0 L60,36 M60,0 L0,36" stroke="#fff" stroke-width="6"/><path d="M0,0 L60,36 M60,0 L0,36" stroke="#cf142b" stroke-width="2"/><path d="M30,0 V36 M0,18 H60" stroke="#fff" stroke-width="10"/><path d="M30,0 V36 M0,18 H60" stroke="#cf142b" stroke-width="6"/></svg></button>
@@ -149,6 +152,43 @@
       </div>
 
       <button id="btn-close-libraries" data-i18n="lib.close">Schließen</button>
+    </div>
+  </dialog>
+
+  <!-- Info-Dialog: neues Feature, was die App macht, Repo-Link -->
+  <dialog id="dlg-info">
+    <h2 data-i18n="info.title">Über 3D Mesh Hub</h2>
+
+    <h3 data-i18n="info.featureTitle">Neu: "Am PC öffnen"</h3>
+    <p data-i18n="info.featureText">
+      In der Detail-Ansicht einer Datei gibt es einen Button "Am PC öffnen", der die
+      Datei im Windows Explorer markiert bzw. im zugeordneten Standardprogramm
+      (z.B. deinem Slicer) öffnet.
+    </p>
+    <p data-i18n="info.featureWhy">
+      Browser dürfen aus Sicherheitsgründen keine lokalen Programme direkt starten -
+      dafür ist einmalig ein kleines, kostenloses Helferskript nötig.
+    </p>
+    <p data-i18n="info.featureSteps">
+      Setup (nur Windows, ca. 30 Sekunden): ZIP herunterladen, entpacken, "install.ps1"
+      per Rechtsklick → "Mit PowerShell ausführen". Läuft komplett im Kontext deines
+      Windows-Benutzers - keine Adminrechte nötig, jederzeit rückgängig machbar.
+    </p>
+    <a class="btn-secondary" href="/downloads/meshhub-windows-helper.zip" download data-i18n="info.featureDownload">Helfer-Skript herunterladen (.zip)</a>
+
+    <h3 data-i18n="info.aboutTitle">Was ist 3D Mesh Hub?</h3>
+    <p data-i18n="info.aboutText">
+      Ein selbst gehostetes Archiv für deine STL-/3MF-/OBJ-Dateien: 3D-Vorschau direkt
+      im Browser, automatisch ausgelesene Metadaten, eigene Tags/Notizen/Status pro
+      Datei, Filament-Mengen-Erfassung. Läuft komplett lokal in Docker - keine Uploads,
+      keine Cloud, keine Registrierung.
+    </p>
+
+    <h3 data-i18n="info.repoTitle">Quellcode</h3>
+    <p><a href="https://github.com/zebo0001/3D-Mesh-Hub" target="_blank" rel="noopener" data-i18n="info.repoLink">Repository ansehen</a></p>
+
+    <div class="dlg-actions">
+      <button id="btn-close-info" data-i18n="info.close">Schließen</button>
     </div>
   </dialog>
 

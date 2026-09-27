@@ -5,6 +5,38 @@ const db = require('./db');
 const { scanAllLibraries, scanLibrary, safeResolve, DATA_ROOT } = require('./scanner');
 const thumbnails = require('./thumbnails');
 
+// ---- "Datei am PC oeffnen"-Link (file://) ----
+// HOST_DATA_ROOT ist der ECHTE Pfad auf dem Host-Rechner (aus .env DATA_ROOT),
+// im Unterschied zu DATA_ROOT/'/data', das nur der Pfad INNERHALB des
+// Containers ist. Nur als String verwendet, der Container selbst greift nie
+// darauf zu - das Frontend baut daraus einen file://-Link, den der Browser
+// (ggf. mit einer Erweiterung wie "Local Explorer") lokal aufloest.
+const HOST_DATA_ROOT = process.env.HOST_DATA_ROOT || '';
+
+function buildLocalFileUrl(relPath) {
+  if (!HOST_DATA_ROOT) return null;
+  // Nur fuer echte absolute Host-Pfade sinnvoll (z.B. "D:/Druckdaten" oder
+  // "/mnt/druckdaten") - ein relativer Beispiel-Pfad wie "./beispiel-daten"
+  // ergibt keinen gueltigen Link.
+  const isWindowsAbs = /^[a-zA-Z]:[\/]/.test(HOST_DATA_ROOT);
+  const isUnixAbs = HOST_DATA_ROOT.startsWith('/');
+  if (!isWindowsAbs && !isUnixAbs) return null;
+
+  const normRoot = HOST_DATA_ROOT.replace(/\\/g, '/').replace(/\/+$/, '');
+  const normRel = String(relPath).replace(/\\/g, '/').replace(/^\/+/, '');
+  const fullPath = `${normRoot}/${normRel}`;
+
+  // WICHTIG: kein file://-Link mehr - aktuelle Chrome/Edge-Versionen
+  // blockieren die Navigation zu file:// von einer normalen http(s)-Seite
+  // aus komplett ("Not allowed to load local resource"), unabhaengig von
+  // installierten Erweiterungen. Stattdessen ein eigenes Protokoll
+  // (meshhub://), das ein einmalig lokal registriertes Windows-Helferskript
+  // aufruft (siehe windows-helper/) - das ist derselbe Mechanismus, den z.B.
+  // vscode:// oder zoommtg:// nutzen und unterliegt der obigen Blockade nicht.
+  if (!isWindowsAbs) return null; // Helferskript aktuell nur fuer Windows gebaut
+  return `meshhub://select?path=${encodeURIComponent(fullPath)}`;
+}
+
 const app = express();
 app.use(express.json());
 app.use(express.static(path.join(__dirname, '..', 'public')));
@@ -222,6 +254,7 @@ function formatFileRow(row) {
     orientation: parseOrientation(row.orientation_json),
     thumbnail_version: thumbnails.getThumbnailVersion(row.id),
     mesh_version: row.ext === '3mf' ? thumbnails.getMeshVersion(row.id) : 0,
+    local_file_url: buildLocalFileUrl(row.rel_path),
   };
 }
 

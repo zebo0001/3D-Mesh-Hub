@@ -142,7 +142,7 @@ app.get('/api/scan-status', (req, res) => {
 // ---- Dateiliste (inkl. eigener Notizen/Tags) ----
 app.get('/api/files', (req, res) => {
   const rows = db.prepare(`
-    SELECT f.*, m.notes, m.tags, m.status, m.filament_json
+    SELECT f.*, m.notes, m.tags, m.status, m.filament_json, m.orientation_json
     FROM files f
     LEFT JOIN file_meta m ON m.file_id = f.id
     ORDER BY f.filename COLLATE NOCASE
@@ -152,7 +152,7 @@ app.get('/api/files', (req, res) => {
 
 app.get('/api/files/:id', (req, res) => {
   const row = db.prepare(`
-    SELECT f.*, m.notes, m.tags, m.status, m.filament_json
+    SELECT f.*, m.notes, m.tags, m.status, m.filament_json, m.orientation_json
     FROM files f LEFT JOIN file_meta m ON m.file_id = f.id
     WHERE f.id = ?
   `).get(req.params.id);
@@ -172,6 +172,31 @@ function sanitizeFilament(input) {
     }))
     .filter((row) => row.color !== '' || Number.isFinite(row.grams))
     .map((row) => ({ color: row.color, grams: Number.isFinite(row.grams) ? row.grams : 0 }));
+}
+
+const DEFAULT_ORIENTATION = { x: 0, y: 0, z: 0 };
+
+// Manuelle Zusatz-Drehung normalisieren: nur Vielfache von 90 Grad, 0-270.
+// Kommt sowohl beim Lesen (falls jemand die DB von Hand anfasst) als auch
+// beim Speichern zum Einsatz.
+function normalizeOrientation(input) {
+  const out = { ...DEFAULT_ORIENTATION };
+  for (const axis of ['x', 'y', 'z']) {
+    const n = Number(input && input[axis]);
+    if (Number.isFinite(n)) {
+      out[axis] = ((Math.round(n / 90) * 90) % 360 + 360) % 360;
+    }
+  }
+  return out;
+}
+
+function parseOrientation(json) {
+  if (!json) return { ...DEFAULT_ORIENTATION };
+  try {
+    return normalizeOrientation(JSON.parse(json));
+  } catch {
+    return { ...DEFAULT_ORIENTATION };
+  }
 }
 
 function formatFileRow(row) {
@@ -194,6 +219,9 @@ function formatFileRow(row) {
     status: row.status || '',
     filament,
     filament_total_grams: filament.reduce((sum, r) => sum + (Number(r.grams) || 0), 0),
+    orientation: parseOrientation(row.orientation_json),
+    thumbnail_version: thumbnails.getThumbnailVersion(row.id),
+    mesh_version: row.ext === '3mf' ? thumbnails.getMeshVersion(row.id) : 0,
   };
 }
 
@@ -210,6 +238,23 @@ app.put('/api/files/:id/meta', (req, res) => {
       filament_json=excluded.filament_json, updated_at=datetime('now')
   `).run(req.params.id, notes, tags, status, JSON.stringify(filament));
   res.json({ ok: true });
+});
+
+// ---- Manuelle Ausrichtungs-Korrektur (siehe DEFAULT_ORIENTATION-Kommentar
+// oben): STL/3MF ohne verlaessliche Konvention lassen sich damit einmalig
+// pro Datei korrigieren. Loescht den vorhandenen Thumbnail/GLB-Cache, damit
+// der naechste Aufruf mit der neuen Ausrichtung neu rendert.
+app.put('/api/files/:id/orientation', (req, res) => {
+  const exists = db.prepare('SELECT 1 FROM files WHERE id = ?').get(req.params.id);
+  if (!exists) return res.status(404).json({ error: 'Datei nicht in der Datenbank' });
+  const orientation = normalizeOrientation(req.body);
+  db.prepare(`
+    INSERT INTO file_meta (file_id, orientation_json, updated_at)
+    VALUES (?, ?, datetime('now'))
+    ON CONFLICT(file_id) DO UPDATE SET orientation_json=excluded.orientation_json, updated_at=datetime('now')
+  `).run(req.params.id, JSON.stringify(orientation));
+  thumbnails.invalidateCache(req.params.id);
+  res.json({ ok: true, orientation });
 });
 
 // ---- Rohdatei ausliefern (fuer den Three.js-Viewer im Browser) ----
@@ -232,20 +277,38 @@ app.get('/api/files/:id/raw', (req, res) => {
 // frisch ist. Gemeinsame Funktion, weil das sowohl beim normalen Abruf ueber
 // /thumbnail als auch beim Hintergrund-Vorwaermen (siehe warmupOnStartup)
 // passieren muss.
-function syncMeshCacheMtime(fileId, ext) {
-  if (ext !== '3mf' || !thumbnails.getCachedMeshPath(fileId)) return;
+function recordRenderSuccess(fileId, ext) {
   const row = db.prepare('SELECT mtime FROM files WHERE id = ?').get(fileId);
-  if (row) db.prepare('UPDATE files SET mesh_glb_mtime = ? WHERE id = ?').run(row.mtime, fileId);
+  if (!row) return;
+  // render_version IMMER stempeln (unabhaengig vom Format) - das ist, was
+  // /thumbnail und runScanAndWarmup nutzen, um veraltete (mit alter Render-
+  // Logik erzeugte) Caches automatisch zu erkennen und neu zu erzeugen.
+  db.prepare('UPDATE files SET render_version = ? WHERE id = ?').run(thumbnails.RENDER_VERSION, fileId);
+  // mesh_glb_mtime bleibt 3MF-spezifisch (steuert /api/files/:id/mesh).
+  if (ext === '3mf' && thumbnails.getCachedMeshPath(fileId)) {
+    db.prepare('UPDATE files SET mesh_glb_mtime = ? WHERE id = ?').run(row.mtime, fileId);
+  }
 }
 
 // ---- Thumbnail (serverseitig gerendert, gecacht) ----
 app.get('/api/files/:id/thumbnail', async (req, res) => {
-  const row = db.prepare('SELECT ext, missing, rel_path, size_bytes, mtime FROM files WHERE id = ?').get(req.params.id);
+  const row = db.prepare(`
+    SELECT f.ext, f.missing, f.rel_path, f.size_bytes, f.mtime, f.render_version, m.orientation_json
+    FROM files f LEFT JOIN file_meta m ON m.file_id = f.id
+    WHERE f.id = ?
+  `).get(req.params.id);
   if (!row) return res.status(404).end();
   if (row.missing || !thumbnails.isRenderable(row.ext)) {
     return res.redirect('/img/no-preview.svg');
   }
-  let filePath = thumbnails.getCachedThumbnailPath(req.params.id);
+  // Ein vorhandenes Thumbnail zaehlt nur als gueltiger Cache-Treffer, wenn es
+  // auch mit der aktuellen Render-Logik erzeugt wurde (siehe RENDER_VERSION-
+  // Kommentar in thumbnails.js) - sonst wuerde z.B. die Z-up-Korrektur vom
+  // 26.09.2026 fuer Bestandsdateien nie greifen, obwohl die Quelldatei sich
+  // gar nicht geaendert hat.
+  let filePath = row.render_version === thumbnails.RENDER_VERSION
+    ? thumbnails.getCachedThumbnailPath(req.params.id)
+    : null;
   if (!filePath && !getThumbnailsEnabled()) {
     // Automatische Erzeugung ist in den Einstellungen deaktiviert - kein
     // Cache vorhanden, also Platzhalter statt teurem Rendern.
@@ -253,7 +316,8 @@ app.get('/api/files/:id/thumbnail', async (req, res) => {
   }
   if (!filePath) {
     try {
-      filePath = await thumbnails.generateThumbnail(req.params.id, row.ext, row.size_bytes);
+      const orientation = parseOrientation(row.orientation_json);
+      filePath = await thumbnails.generateThumbnail(req.params.id, row.ext, row.size_bytes, { orientation });
     } catch (err) {
       const sizeMb = (row.size_bytes / (1024 * 1024)).toFixed(1);
       console.error(`Thumbnail-Generierung fehlgeschlagen fuer "${row.rel_path}" (${sizeMb} MB, ${req.params.id}):`, err.message);
@@ -261,7 +325,7 @@ app.get('/api/files/:id/thumbnail', async (req, res) => {
     }
   }
   if (!filePath) return res.redirect('/img/no-preview.svg');
-  syncMeshCacheMtime(req.params.id, row.ext);
+  recordRenderSuccess(req.params.id, row.ext);
   res.set('Cache-Control', 'public, max-age=86400');
   res.sendFile(filePath);
 });
@@ -301,6 +365,7 @@ app.get('/api/folders', (req, res) => {
         total_bytes: 0,
         by_ext: {},
         thumbnail_file_id: null,
+        thumbnail_version: 0,
         latest_mtime: null,
       });
     }
@@ -308,7 +373,10 @@ app.get('/api/folders', (req, res) => {
     f.file_count++;
     f.total_bytes += row.size_bytes;
     f.by_ext[row.ext] = (f.by_ext[row.ext] || 0) + 1;
-    if (!f.thumbnail_file_id && thumbnails.isRenderable(row.ext)) f.thumbnail_file_id = row.id;
+    if (!f.thumbnail_file_id && thumbnails.isRenderable(row.ext)) {
+      f.thumbnail_file_id = row.id;
+      f.thumbnail_version = thumbnails.getThumbnailVersion(row.id);
+    }
     if (!f.latest_mtime || row.mtime > f.latest_mtime) f.latest_mtime = row.mtime;
   }
   res.json(Array.from(folders.values()).sort((a, b) => a.name.localeCompare(b.name, 'de')));
@@ -333,7 +401,7 @@ app.get('/api/stats', (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 const server = app.listen(PORT, () => {
-  console.log(`3D-Datei-Archiv laeuft auf Port ${PORT} (DATA_ROOT=${DATA_ROOT})`);
+  console.log(`3D Mesh Hub laeuft auf Port ${PORT} (DATA_ROOT=${DATA_ROOT})`);
   runScanAndWarmup('Containerstart');
   schedulePeriodicScan();
 });
@@ -379,8 +447,9 @@ async function runScanAndWarmup(reason) {
       return;
     }
 
-    const rows = db.prepare('SELECT id, ext, rel_path, size_bytes FROM files WHERE missing = 0').all()
-      .filter((r) => thumbnails.isRenderable(r.ext) && !thumbnails.getCachedThumbnailPath(r.id));
+    const rows = db.prepare('SELECT id, ext, rel_path, size_bytes, render_version FROM files WHERE missing = 0').all()
+      .filter((r) => thumbnails.isRenderable(r.ext) &&
+        (!thumbnails.getCachedThumbnailPath(r.id) || r.render_version !== thumbnails.RENDER_VERSION));
     if (rows.length === 0) {
       console.log('Hintergrund-Scan fertig, alle Thumbnails bereits vorhanden.');
       return;
@@ -399,7 +468,7 @@ async function runScanAndWarmup(reason) {
       rows.map((row) =>
         thumbnails.generateThumbnail(row.id, row.ext, row.size_bytes, { background: true })
           .then(() => {
-            syncMeshCacheMtime(row.id, row.ext);
+            recordRenderSuccess(row.id, row.ext);
             warmupProgress.done++;
           })
           .catch((err) => {

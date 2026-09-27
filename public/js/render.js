@@ -52,14 +52,27 @@ async function run() {
     const geometry = await new STLLoader().loadAsync(url);
     geometry.computeVertexNormals();
     object3d = new THREE.Mesh(geometry, material);
+    // STL/3MF sind in der 3D-Druck-Welt so gut wie immer Z-up (Z = Druckhoehe,
+    // XY = Druckbett-Ebene) - das ist eine Format-/Branchenkonvention, KEINE
+    // Annahme ueber die individuelle Ausrichtung eines einzelnen Modells (die
+    // bleibt bewusst unangetastet, siehe "kein Druckbett-Gitter" oben/README).
+    // three.js selbst ist Y-up. Ohne diese Korrektur landet die Druckhoehe auf
+    // der Tiefen-Achse des Viewers - das Modell erscheint dann "liegend".
+    // Reine Rotation (keine Spiegelung), Normalen/Winding bleiben unangetastet.
+    object3d.rotation.x = -Math.PI / 2;
   } else if (ext === 'obj') {
     // OBJLoader liefert eine Group mit eigenen (ggf. fehlenden) Materialien -
     // wie bei STL bewusst durch unser einheitliches Standardmaterial ersetzt,
     // da wir keine MTL-Dateien einlesen (siehe parsers/obj.js).
     object3d = await new OBJLoader().loadAsync(url);
     object3d.traverse((child) => { if (child.isMesh) child.material = material; });
+    // BEWUSST KEINE Z-up-Korrektur hier: anders als STL/3MF hat OBJ keine
+    // verlaessliche Branchenkonvention (je nach Export-Tool Y-up ODER Z-up) -
+    // eine pauschale Drehung wuerde manche OBJ-Dateien nur falsch statt richtig
+    // ausrichten. Bekannte Einschraenkung, siehe README.
   } else if (ext === '3mf') {
     object3d = await new ThreeMFLoader().loadAsync(url);
+    object3d.rotation.x = -Math.PI / 2; // siehe STL-Kommentar oben - gleiche Branchenkonvention
     // GLB-Export VOR der Zentrierung/Kamera-Anpassung unten, damit die
     // gecachte Datei dieselben Ausgangskoordinaten hat wie ein frischer
     // ThreeMFLoader-Aufruf im interaktiven Viewer (der zentriert selbst).

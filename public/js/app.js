@@ -1,4 +1,5 @@
 import { loadIntoViewer } from './viewer.js';
+import { t, getLang, setLang, applyStaticTranslations, localeTag, sortLocale } from './i18n.js';
 
 const gridEl = document.getElementById('grid');
 const breadcrumbEl = document.getElementById('breadcrumb');
@@ -11,6 +12,8 @@ const overlayEl = document.getElementById('overlay');
 const detailEl = document.getElementById('detail');
 const progressEl = document.getElementById('thumb-progress');
 const progressTextEl = document.getElementById('thumb-progress-text');
+const btnLangDe = document.getElementById('btn-lang-de');
+const btnLangEn = document.getElementById('btn-lang-en');
 let progressGeneration = 0;
 
 let allFiles = [];
@@ -116,7 +119,7 @@ function render() {
 function updateBreadcrumb() {
   if (folderFilter !== null) {
     breadcrumbEl.hidden = false;
-    breadcrumbEl.innerHTML = `<a id="bc-back">← Alle Ordner</a> / ${escapeHtml(folderFilter || '(Wurzelordner)')}`;
+    breadcrumbEl.innerHTML = `<a id="bc-back">${t('breadcrumb.allFolders')}</a> / ${escapeHtml(folderFilter || t('breadcrumb.root'))}`;
     document.getElementById('bc-back').addEventListener('click', () => {
       folderFilter = null;
       currentView = 'folders';
@@ -149,7 +152,7 @@ function trackThumbnailProgress() {
   if (total === 0) { progressEl.hidden = true; return; }
 
   let done = 0;
-  const updateText = () => { progressTextEl.textContent = `Vorschaubilder werden geladen… ${done}/${total}`; };
+  const updateText = () => { progressTextEl.textContent = t('progress.loadingThumbs', { done, total }); };
   updateText();
   progressEl.hidden = false;
 
@@ -175,13 +178,13 @@ function trackThumbnailProgress() {
 function renderFolderGrid() {
   let list = allFolders.filter(f => !searchTerm || f.name.toLowerCase().includes(searchTerm));
   list = applySort(list, {
-    name: (a, b) => a.name.localeCompare(b.name, 'de'),
+    name: (a, b) => a.name.localeCompare(b.name, sortLocale()),
     date: (a, b) => (b.latest_mtime || '').localeCompare(a.latest_mtime || ''),
     size: (a, b) => b.total_bytes - a.total_bytes,
   });
 
   if (list.length === 0) {
-    gridEl.innerHTML = '<p class="hint">Keine Ordner gefunden. Lege unter „Bibliotheken“ einen Ordner an und scanne.</p>';
+    gridEl.innerHTML = `<p class="hint">${t('grid.noFolders')}</p>`;
     return;
   }
 
@@ -189,14 +192,14 @@ function renderFolderGrid() {
   for (const f of list) {
     const card = document.createElement('div');
     card.className = 'card';
-    const thumbSrc = f.thumbnail_file_id ? `/api/files/${f.thumbnail_file_id}/thumbnail` : '/img/no-preview.svg';
+    const thumbSrc = f.thumbnail_file_id ? `/api/files/${f.thumbnail_file_id}/thumbnail?v=${f.thumbnail_version || 0}` : '/img/no-preview.svg';
     const badges = Object.entries(f.by_ext).map(([ext, n]) => `<span class="format-badge">${ext.toUpperCase()} ${n}</span>`).join('');
     card.innerHTML = `
-      <div class="card-thumb"><img src="${thumbSrc}" loading="lazy" alt="" onerror="this.src='/img/no-preview.svg'"><span class="ext-badge">ORDNER</span></div>
+      <div class="card-thumb"><img src="${thumbSrc}" loading="lazy" alt="" onerror="this.src='/img/no-preview.svg'"><span class="ext-badge">${t('folderCard.badge')}</span></div>
       <div class="card-body">
-        <div class="card-kicker">Ordner</div>
+        <div class="card-kicker">${t('folderCard.kicker')}</div>
         <div class="card-title" title="${escapeAttr(f.name)}">${escapeHtml(f.name)}</div>
-        <div class="card-meta">${badges}<span>${f.file_count} Dateien</span><span>${formatBytes(f.total_bytes)}</span></div>
+        <div class="card-meta">${badges}<span>${t('folderCard.fileCount', { n: f.file_count })}</span><span>${formatBytes(f.total_bytes)}</span></div>
       </div>
     `;
     card.addEventListener('click', () => {
@@ -221,13 +224,13 @@ function renderFileGrid() {
     return true;
   });
   list = applySort(list, {
-    name: (a, b) => a.filename.localeCompare(b.filename, 'de'),
+    name: (a, b) => a.filename.localeCompare(b.filename, sortLocale()),
     date: (a, b) => (b.mtime || '').localeCompare(a.mtime || ''),
     size: (a, b) => b.size_bytes - a.size_bytes,
   });
 
   if (list.length === 0) {
-    gridEl.innerHTML = '<p class="hint">Keine Dateien gefunden.</p>';
+    gridEl.innerHTML = `<p class="hint">${t('grid.noFiles')}</p>`;
     return;
   }
 
@@ -235,11 +238,11 @@ function renderFileGrid() {
   for (const f of list) {
     const card = document.createElement('div');
     card.className = 'card' + (f.missing ? ' missing' : '');
-    const thumbSrc = `/api/files/${f.id}/thumbnail`;
+    const thumbSrc = `/api/files/${f.id}/thumbnail?v=${f.thumbnail_version || 0}`;
     card.innerHTML = `
       <div class="card-thumb"><img src="${thumbSrc}" loading="lazy" alt="" onerror="this.src='/img/no-preview.svg'"><span class="ext-badge">${f.ext}</span></div>
       <div class="card-body">
-        <div class="card-kicker">${f.status ? escapeHtml(f.status) : 'Datei'}${f.missing ? ' · fehlt' : ''}</div>
+        <div class="card-kicker">${f.status ? escapeHtml(f.status) : t('fileCard.kicker')}${f.missing ? t('fileCard.missing') : ''}</div>
         <div class="card-title" title="${escapeAttr(f.filename)}">${escapeHtml(f.filename)}</div>
         <div class="card-meta"><span>${formatBytes(f.size_bytes)}</span></div>
       </div>
@@ -284,15 +287,15 @@ function renderDetail(f) {
   if (geo && !geo.error) {
     if (geo.bbox) {
       const size = [0, 1, 2].map(i => (geo.bbox.max[i] - geo.bbox.min[i]).toFixed(1));
-      geoRows += `<tr><td>Abmessungen (X×Y×Z, mm)</td><td>${size.join(' × ')}</td></tr>`;
+      geoRows += `<tr><td>${t('detail.dimensions')}</td><td>${size.join(' × ')}</td></tr>`;
     }
-    if (geo.triangles != null) geoRows += `<tr><td>Dreiecke</td><td>${geo.triangles.toLocaleString('de-DE')}</td></tr>`;
-    if (geo.volumeMm3Approx != null) geoRows += `<tr><td>Volumen (ca., nur bei geschlossenem Mesh exakt)</td><td>${(geo.volumeMm3Approx / 1000).toFixed(2)} cm³</td></tr>`;
+    if (geo.triangles != null) geoRows += `<tr><td>${t('detail.triangles')}</td><td>${geo.triangles.toLocaleString(localeTag())}</td></tr>`;
+    if (geo.volumeMm3Approx != null) geoRows += `<tr><td>${t('detail.volume')}</td><td>${(geo.volumeMm3Approx / 1000).toFixed(2)} cm³</td></tr>`;
     // OBJ liefert (noch) keine Dreieckszahl/kein Volumen, siehe parsers/obj.js
-    if (geo.vertices != null) geoRows += `<tr><td>Vertices</td><td>${geo.vertices.toLocaleString('de-DE')}</td></tr>`;
-    if (geo.faces != null) geoRows += `<tr><td>Flächen</td><td>${geo.faces.toLocaleString('de-DE')}</td></tr>`;
+    if (geo.vertices != null) geoRows += `<tr><td>${t('detail.vertices')}</td><td>${geo.vertices.toLocaleString(localeTag())}</td></tr>`;
+    if (geo.faces != null) geoRows += `<tr><td>${t('detail.faces')}</td><td>${geo.faces.toLocaleString(localeTag())}</td></tr>`;
   } else if (geo && geo.error) {
-    geoRows = `<tr><td>Geometrie</td><td>Konnte nicht gelesen werden (${geo.error})</td></tr>`;
+    geoRows = `<tr><td>${t('detail.geometry')}</td><td>${t('detail.geometryError', { err: geo.error })}</td></tr>`;
   }
 
   let metaRows = '';
@@ -309,30 +312,30 @@ function renderDetail(f) {
     <h2>${escapeHtml(f.filename)}</h2>
     <div id="viewer-canvas-wrap"></div>
     <table class="meta-table">
-      <tr><td>Pfad</td><td>${escapeHtml(f.rel_path)}</td></tr>
-      <tr><td>Größe</td><td>${formatBytes(f.size_bytes)}</td></tr>
-      <tr><td>Geändert</td><td>${new Date(f.mtime).toLocaleString('de-DE')}</td></tr>
+      <tr><td>${t('detail.path')}</td><td>${escapeHtml(f.rel_path)}</td></tr>
+      <tr><td>${t('detail.size')}</td><td>${formatBytes(f.size_bytes)}</td></tr>
+      <tr><td>${t('detail.modified')}</td><td>${new Date(f.mtime).toLocaleString(localeTag())}</td></tr>
       ${geoRows}
       ${metaRows}
     </table>
     <form class="notes-form" id="notes-form">
-      <label>Status
-        <input name="status" value="${escapeAttr(f.status)}" placeholder="z.B. gedruckt, in Arbeit, geplant" />
+      <label>${t('form.status')}
+        <input name="status" value="${escapeAttr(f.status)}" placeholder="${t('form.statusPlaceholder')}" />
       </label>
-      <label>Tags (kommagetrennt)
-        <input name="tags" value="${escapeAttr(f.tags)}" placeholder="z.B. deko, funktional, miniaturen" />
+      <label>${t('form.tags')}
+        <input name="tags" value="${escapeAttr(f.tags)}" placeholder="${t('form.tagsPlaceholder')}" />
       </label>
-      <label>Notizen
-        <textarea name="notes" placeholder="Eigene Notizen zu dieser Datei…">${escapeHtml(f.notes)}</textarea>
+      <label>${t('form.notes')}
+        <textarea name="notes" placeholder="${t('form.notesPlaceholder')}">${escapeHtml(f.notes)}</textarea>
       </label>
-      <label>Benötigtes Filament
+      <label>${t('form.filament')}
         <div id="filament-rows">${filamentRows}</div>
         <div class="filament-actions">
-          <button type="button" id="btn-add-filament" class="btn-secondary">+ Farbe hinzufügen</button>
+          <button type="button" id="btn-add-filament" class="btn-secondary">${t('form.addColor')}</button>
           <span id="filament-total" class="hint"></span>
         </div>
       </label>
-      <button type="submit">Speichern</button>
+      <button type="submit">${t('form.save')}</button>
       <span class="hint" id="notes-saved-hint"></span>
     </form>
   `;
@@ -343,7 +346,7 @@ function renderDetail(f) {
   function updateFilamentTotal() {
     const total = [...filamentRowsEl.querySelectorAll('.filament-row')]
       .reduce((sum, row) => sum + (Number(row.querySelector('.filament-grams').value) || 0), 0);
-    filamentTotalEl.textContent = total > 0 ? `Gesamt: ${total} g` : '';
+    filamentTotalEl.textContent = total > 0 ? t('form.filamentTotal', { n: total }) : '';
   }
 
   function addFilamentRow(color = '', grams = '') {
@@ -383,19 +386,19 @@ function renderDetail(f) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     });
-    document.getElementById('notes-saved-hint').textContent = 'Gespeichert.';
+    document.getElementById('notes-saved-hint').textContent = t('form.saved');
     const idx = allFiles.findIndex(x => x.id === f.id);
     if (idx >= 0) Object.assign(allFiles[idx], body);
   });
 
-  if (!f.missing) loadIntoViewer('viewer-canvas-wrap', f.id, f.ext, f.size_bytes);
+  if (!f.missing) loadIntoViewer('viewer-canvas-wrap', f.id, f.ext, f.size_bytes, f.mesh_version || 0);
 }
 
 function filamentRowHtml(row) {
   return `<div class="filament-row">
-    <input class="filament-color" placeholder="Farbe (z.B. Rot)" value="${escapeAttr(row.color || '')}" />
-    <input class="filament-grams" type="number" min="0" step="1" placeholder="Gramm" value="${row.grams || row.grams === 0 ? escapeAttr(String(row.grams)) : ''}" />
-    <button type="button" class="btn-remove-filament" title="Zeile entfernen">✕</button>
+    <input class="filament-color" placeholder="${t('filament.colorPlaceholder')}" value="${escapeAttr(row.color || '')}" />
+    <input class="filament-grams" type="number" min="0" step="1" placeholder="${t('filament.gramsPlaceholder')}" value="${row.grams || row.grams === 0 ? escapeAttr(String(row.grams)) : ''}" />
+    <button type="button" class="btn-remove-filament" title="${t('filament.removeTitle')}">✕</button>
   </div>`;
 }
 
@@ -406,13 +409,13 @@ searchInput.addEventListener('input', () => { searchTerm = searchInput.value.tri
 sortSelect.addEventListener('change', () => { sortBy = sortSelect.value; render(); });
 
 document.getElementById('btn-scan').addEventListener('click', async () => {
-  scanStatusEl.textContent = 'Scanne…';
+  scanStatusEl.textContent = t('scan.scanning');
   try {
     await api('/api/scan', { method: 'POST' });
     await loadAll();
-    scanStatusEl.textContent = 'Fertig.';
+    scanStatusEl.textContent = t('scan.done');
   } catch (err) {
-    scanStatusEl.textContent = 'Fehler: ' + err.message;
+    scanStatusEl.textContent = t('scan.error', { msg: err.message });
   }
   setTimeout(() => (scanStatusEl.textContent = ''), 3000);
 });
@@ -452,15 +455,16 @@ document.getElementById('btn-close-libraries').addEventListener('click', () => d
 
 // ---- Scan-Intervall (periodischer Hintergrund-Scan, siehe README) ----
 const scanIntervalSelectEl = document.getElementById('scan-interval-select');
-const SCAN_INTERVAL_LABELS = {
-  15: '15 Minuten', 30: '30 Minuten', 60: '1 Stunde', 120: '2 Stunden',
-  240: '4 Stunden', 360: '6 Stunden', 720: '12 Stunden', 1440: '24 Stunden',
-};
+function scanIntervalLabel(min) {
+  const key = 'interval.' + min;
+  const translated = t(key);
+  return translated !== key ? translated : t('interval.other', { n: min });
+}
 
 async function refreshScanIntervalSelect() {
   const data = await api('/api/settings');
   scanIntervalSelectEl.innerHTML = data.scan_interval_presets
-    .map((min) => `<option value="${min}">${SCAN_INTERVAL_LABELS[min] || min + ' Min.'}</option>`)
+    .map((min) => `<option value="${min}">${scanIntervalLabel(min)}</option>`)
     .join('');
   scanIntervalSelectEl.value = String(data.scan_interval_minutes);
 }
@@ -496,7 +500,7 @@ async function browseTo(p) {
 
   if (p) {
     const up = document.createElement('li');
-    up.textContent = '.. (eine Ebene hoch)';
+    up.textContent = t('lib.upLevel');
     up.addEventListener('click', () => browseTo(p.split('/').slice(0, -1).join('/')));
     libBrowserEl.appendChild(up);
   }
@@ -507,15 +511,15 @@ async function browseTo(p) {
 
     const recursiveLabel = document.createElement('label');
     recursiveLabel.className = 'inline-check';
-    recursiveLabel.title = 'Wenn aktiv: alle Unterordner von diesem Ordner werden mit durchsucht.';
+    recursiveLabel.title = t('lib.recursiveTitle');
     const recursiveCheck = document.createElement('input');
     recursiveCheck.type = 'checkbox';
     recursiveCheck.checked = true;
     recursiveLabel.appendChild(recursiveCheck);
-    recursiveLabel.appendChild(document.createTextNode(' inkl. Unterordner'));
+    recursiveLabel.appendChild(document.createTextNode(t('lib.recursiveLabel')));
 
     const addBtn = document.createElement('button');
-    addBtn.textContent = 'Als Bibliothek hinzufügen';
+    addBtn.textContent = t('lib.addAsLibrary');
     addBtn.addEventListener('click', async (ev) => {
       ev.stopPropagation();
       await api('/api/libraries', {
@@ -532,15 +536,15 @@ async function browseTo(p) {
     libBrowserEl.appendChild(li);
   }
   if (data.directories.length === 0 && !p) {
-    libBrowserEl.innerHTML = '<li class="hint">Keine Unterordner unter /data gefunden – prüfe DATA_ROOT in der .env.</li>';
+    libBrowserEl.innerHTML = `<li class="hint">${t('lib.noSubfolders')}</li>`;
   }
 }
 
 async function refreshLibraries() {
   const libs = await api('/api/libraries');
-  libListEl.innerHTML = '<li><strong>Aktive Bibliotheken:</strong></li>';
+  libListEl.innerHTML = `<li>${t('lib.activeLibraries')}</li>`;
   if (libs.length === 0) {
-    libListEl.innerHTML += '<li class="hint">Noch keine ausgewählt.</li>';
+    libListEl.innerHTML += `<li class="hint">${t('lib.noneSelected')}</li>`;
   }
   for (const lib of libs) {
     const li = document.createElement('li');
@@ -552,7 +556,7 @@ async function refreshLibraries() {
     recursiveCheck.type = 'checkbox';
     recursiveCheck.checked = !!lib.recursive;
     recursiveLabel.appendChild(recursiveCheck);
-    recursiveLabel.appendChild(document.createTextNode(' inkl. Unterordner'));
+    recursiveLabel.appendChild(document.createTextNode(t('lib.recursiveLabel')));
     recursiveCheck.addEventListener('change', async () => {
       await api(`/api/libraries/${lib.id}`, {
         method: 'PUT',
@@ -563,7 +567,7 @@ async function refreshLibraries() {
     });
 
     const rm = document.createElement('button');
-    rm.textContent = 'Entfernen';
+    rm.textContent = t('lib.remove');
     rm.addEventListener('click', async () => {
       await api(`/api/libraries/${lib.id}`, { method: 'DELETE' });
       await refreshLibraries();
@@ -575,10 +579,39 @@ async function refreshLibraries() {
   }
 }
 
+// ---- Sprachumschaltung (DE Standard, EN Zusatzoption, User-Wunsch
+// 27.09.2026) - rein clientseitig in localStorage, wie das Theme. Bei
+// Wechsel: statische data-i18n-Texte neu anwenden, aktive Ansicht +
+// evtl. offenes Detail-Overlay/Bibliotheks-Dialog neu rendern, damit
+// dynamisch erzeugte Texte (Kartenbeschriftungen, Formular etc.)
+// sofort mitziehen.
+function setActiveLangButtons() {
+  const lang = getLang();
+  btnLangDe.classList.toggle('active', lang === 'de');
+  btnLangEn.classList.toggle('active', lang === 'en');
+}
+
+async function onLangChanged() {
+  setActiveLangButtons();
+  applyStaticTranslations();
+  render();
+  if (dlg.open) {
+    await refreshScanIntervalSelect();
+  }
+  if (currentDetailId) {
+    await openDetail(currentDetailId, { skipHistory: true });
+  }
+}
+
+btnLangDe.addEventListener('click', () => { setLang('de'); onLangChanged(); });
+btnLangEn.addEventListener('click', () => { setLang('en'); onLangChanged(); });
+setActiveLangButtons();
+applyStaticTranslations();
+
 loadAll()
   .then(() => history.replaceState(currentAppState(), ''))
   .catch(err => {
-    gridEl.innerHTML = `<p class="hint">Fehler beim Laden: ${err.message}</p>`;
+    gridEl.innerHTML = `<p class="hint">${t('grid.loadError', { msg: err.message })}</p>`;
   });
 
 // ---- Fortschritt des Hintergrund-Vorwaermens (Containerstart/periodischer
@@ -592,14 +625,14 @@ async function pollScanStatus() {
     if (status.running) {
       wasWarmupRunning = true;
       const soFar = status.done + status.failed;
-      scanStatusEl.textContent = `Hintergrund-Scan läuft: ${soFar}/${status.total} Vorschaubilder erstellt…`;
+      scanStatusEl.textContent = t('scan.bgRunning', { done: soFar, total: status.total });
     } else if (wasWarmupRunning) {
       // Gerade eben fertig geworden - Ergebnis kurz anzeigen und die Ansicht
       // neu laden, damit frisch erzeugte Thumbnails ohne manuellen Reload
       // erscheinen (ein <img>, das vorher schon auf den Platzhalter
       // umgeschaltet hat, versucht sonst nicht von selbst nochmal).
       wasWarmupRunning = false;
-      scanStatusEl.textContent = `Hintergrund-Scan fertig: ${status.done} erstellt, ${status.failed} fehlgeschlagen.`;
+      scanStatusEl.textContent = t('scan.bgDone', { done: status.done, failed: status.failed });
       setTimeout(() => { scanStatusEl.textContent = ''; }, 5000);
       await loadAll();
     }

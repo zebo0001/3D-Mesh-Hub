@@ -3,7 +3,12 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>3D-Datei-Archiv</title>
+  <title>3D Mesh Hub</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+  <link rel="icon" href="/favicon.ico" sizes="32x32" />
+  <link rel="icon" href="/favicon-16x16.png" sizes="16x16" type="image/png" />
+  <link rel="icon" href="/favicon-32x32.png" sizes="32x32" type="image/png" />
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
   <script>
     // Vor dem Stylesheet ausgefuehrt, damit beim Laden nicht kurz das falsche
     // Theme aufblitzt ("Flash of wrong theme"). 'system' (Standard) setzt
@@ -30,7 +35,11 @@
 <body>
   <div class="page">
     <header class="hero">
-      <button id="btn-libraries" class="btn-settings">⚙ Bibliotheken</button>
+      <button id="btn-libraries" class="btn-settings" data-i18n="header.libraries">⚙ Bibliotheken</button>
+      <div class="lang-toggle" id="lang-toggle">
+        <button class="lang-btn" id="btn-lang-de" title="Deutsch" aria-label="Deutsch"><svg viewBox="0 0 5 3" width="20" height="14" aria-hidden="true"><rect width="5" height="1" y="0" fill="#000"/><rect width="5" height="1" y="1" fill="#DD0000"/><rect width="5" height="1" y="2" fill="#FFCE00"/></svg></button>
+        <button class="lang-btn" id="btn-lang-en" title="English" aria-label="English"><svg viewBox="0 0 60 36" width="20" height="14" aria-hidden="true"><rect width="60" height="36" fill="#00247d"/><path d="M0,0 L60,36 M60,0 L0,36" stroke="#fff" stroke-width="6"/><path d="M0,0 L60,36 M60,0 L0,36" stroke="#cf142b" stroke-width="2"/><path d="M30,0 V36 M0,18 H60" stroke="#fff" stroke-width="10"/><path d="M30,0 V36 M0,18 H60" stroke="#cf142b" stroke-width="6"/></svg></button>
+      </div>
       <div class="hero-brand">
         <div class="brand-icon" aria-hidden="true">
           <svg viewBox="0 0 48 48" width="40" height="40">
@@ -47,38 +56,38 @@
             </defs>
           </svg>
         </div>
-        <h1>3D-<span class="accent-text">Datei</span>-Archiv</h1>
+        <h1>3D <span class="accent-text">Mesh</span> Hub</h1>
       </div>
-      <p class="hero-subtitle">Eigenes STL/3MF/STEP-Archiv im Blick — durchsuchen, drehen, zoomen, eigene Notizen &amp; Tags</p>
+      <p class="hero-subtitle" data-i18n="header.subtitle">Eigenes STL/3MF/OBJ-Archiv im Blick — durchsuchen, drehen, zoomen, eigene Notizen &amp; Tags</p>
     </header>
 
     <section class="stats" id="stats">
-      <div class="stat-card"><div class="stat-value" id="stat-folders">–</div><div class="stat-label">Ordner</div></div>
-      <div class="stat-card"><div class="stat-value" id="stat-total">–</div><div class="stat-label">Alle Dateien</div></div>
+      <div class="stat-card"><div class="stat-value" id="stat-folders">–</div><div class="stat-label" data-i18n="stats.folders">Ordner</div></div>
+      <div class="stat-card"><div class="stat-value" id="stat-total">–</div><div class="stat-label" data-i18n="stats.total">Alle Dateien</div></div>
       <div class="stat-card"><div class="stat-value" id="stat-stl">–</div><div class="stat-label">STL</div></div>
       <div class="stat-card"><div class="stat-value" id="stat-3mf">–</div><div class="stat-label">3MF</div></div>
       <div class="stat-card"><div class="stat-value" id="stat-obj">–</div><div class="stat-label">OBJ</div></div>
     </section>
 
     <section class="toolbar">
-      <input type="search" id="search-input" placeholder="Ordner und Dateien durchsuchen…" />
+      <input type="search" id="search-input" data-i18n-placeholder="toolbar.searchPlaceholder" placeholder="Ordner und Dateien durchsuchen…" />
       <div class="toolbar-group">
-        <button class="view-toggle active" id="btn-view-folders">Ordner</button>
-        <button class="view-toggle" id="btn-view-files">Dateien</button>
+        <button class="view-toggle active" id="btn-view-folders" data-i18n="toolbar.folders">Ordner</button>
+        <button class="view-toggle" id="btn-view-files" data-i18n="toolbar.files">Dateien</button>
       </div>
       <select id="sort-select">
-        <option value="name">Name A–Z</option>
-        <option value="date">Zuletzt geändert</option>
-        <option value="size">Größte zuerst</option>
+        <option value="name" data-i18n="toolbar.sortName">Name A–Z</option>
+        <option value="date" data-i18n="toolbar.sortDate">Zuletzt geändert</option>
+        <option value="size" data-i18n="toolbar.sortSize">Größte zuerst</option>
       </select>
-      <button id="btn-scan" class="btn-primary">↻ Neu scannen</button>
+      <button id="btn-scan" class="btn-primary" data-i18n="toolbar.rescan">↻ Neu scannen</button>
       <span id="scan-status" class="hint"></span>
     </section>
 
     <main class="content">
       <div class="breadcrumb hint" id="breadcrumb" hidden></div>
       <div class="grid" id="grid">
-        <p class="hint">Lade…</p>
+        <p class="hint" data-i18n="grid.loading">Lade…</p>
       </div>
     </main>
   </div>
@@ -99,8 +108,8 @@
 
   <!-- Bibliotheks-Dialog: Ordnerauswahl innerhalb des gemounteten Datenordners -->
   <dialog id="dlg-libraries">
-    <h2>Bibliotheken (Unterordner von /data)</h2>
-    <p class="hint">
+    <h2 data-i18n="lib.title">Bibliotheken (Unterordner von /data)</h2>
+    <p class="hint" data-i18n-html="lib.intro">
       Der gesamte gemountete Ordner ist unter <code>/data</code> sichtbar.
       Wähle hier die Unterordner aus, die durchsucht werden sollen.
     </p>
@@ -110,9 +119,9 @@
       <ul id="lib-list" class="lib-list"></ul>
 
       <div class="settings-row">
-        <label for="scan-interval-select">Automatischer Hintergrund-Scan alle:</label>
+        <label for="scan-interval-select" data-i18n="lib.scanIntervalLabel">Automatischer Hintergrund-Scan alle:</label>
         <select id="scan-interval-select"></select>
-        <p class="hint">
+        <p class="hint" data-i18n="lib.scanIntervalHint">
           Prüft periodisch auf neue/geänderte/entfernte Dateien und erzeugt fehlende
           Vorschaubilder direkt im Hintergrund (siehe README). Eine Änderung greift
           spätestens beim nächsten Durchlauf, kein Neustart nötig.
@@ -120,26 +129,26 @@
       </div>
 
       <div class="settings-row">
-        <label for="theme-select">Darstellung:</label>
+        <label for="theme-select" data-i18n="lib.themeLabel">Darstellung:</label>
         <select id="theme-select">
-          <option value="system">System</option>
-          <option value="dark">Dunkel</option>
-          <option value="light">Hell</option>
+          <option value="system" data-i18n="lib.themeSystem">System</option>
+          <option value="dark" data-i18n="lib.themeDark">Dunkel</option>
+          <option value="light" data-i18n="lib.themeLight">Hell</option>
         </select>
       </div>
 
       <div class="settings-row">
         <label class="inline-check">
           <input type="checkbox" id="thumbnails-enabled-check" />
-          Vorschaubilder automatisch erzeugen
+          <span data-i18n="lib.thumbsLabel">Vorschaubilder automatisch erzeugen</span>
         </label>
-        <p class="hint">
+        <p class="hint" data-i18n="lib.thumbsHint">
           Bei sehr großen Archiven kann das Rendern der Vorschaubilder spürbar CPU
           beanspruchen. Deaktiviert lässt die App Dateien nur mit Platzhalter anzeigen.
         </p>
       </div>
 
-      <button id="btn-close-libraries">Schließen</button>
+      <button id="btn-close-libraries" data-i18n="lib.close">Schließen</button>
     </div>
   </dialog>
 

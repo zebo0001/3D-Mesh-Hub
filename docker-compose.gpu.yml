@@ -22,7 +22,7 @@
 # - server/thumbnails.js faellt automatisch auf Software-Rendering zurueck,
 #   falls der GPU-Start von Chromium fehlschlaegt (siehe Log-Meldung).
 services:
-  3d-datei-archiv:
+  3d-mesh-hub:
     deploy:
       resources:
         reservations:

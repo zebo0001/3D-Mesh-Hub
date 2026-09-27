@@ -1,7 +1,7 @@
 {
-  "name": "3d-datei-archiv",
+  "name": "3d-mesh-hub",
   "version": "0.1.0",
-  "description": "Lokale Webapp zur Verwaltung eines eigenen STL/STEP/3MF-Archivs mit 3D-Vorschau",
+  "description": "Lokale Webapp zur Verwaltung eines eigenen STL/3MF/OBJ-Archivs mit 3D-Vorschau",
   "license": "MIT",
   "main": "server/index.js",
   "type": "commonjs",

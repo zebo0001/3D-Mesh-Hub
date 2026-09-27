@@ -1,4 +1,6 @@
-# 3D-Datei-Archiv
+**English version:** [README.en.md](README.en.md)
+
+# 3D Mesh Hub
 
 Lokale, selbst gehostete Webapp zur Verwaltung eines eigenen STL-/3MF-/OBJ-Archivs:
 Vorschau der Datei inklusive automatisch ausgelesener und eigener Zusatzinfos,
@@ -91,7 +93,7 @@ Debian (`node:20-slim`) mit expliziten Software-Rendering-Flags
 `/dev/shm` eine häufige zweite Absturzursache für Chromium in Containern ist.
 
 Falls es trotzdem nicht rendert: `docker compose logs -f` zeigt die genaue
-Fehlermeldung; `docker compose exec 3d-datei-archiv chromium --version`
+Fehlermeldung; `docker compose exec 3d-mesh-hub chromium --version`
 prüft, ob das Binary überhaupt startet.
 
 **Zweite Stolperfalle (ebenfalls gefixt):** Beim Umstieg auf Debian wurde
@@ -194,10 +196,15 @@ Speichern ignoriert.
 - **Datenbank:** SQLite (better-sqlite3), im eigenen Docker-Volume
   `app-db` — getrennt vom Datenordner, damit nichts am eigenen Archiv
   verändert wird. Thumbnails liegen im selben Volume.
-- **Frontend:** Vanilla JS + Three.js (STLLoader/3MFLoader + OrbitControls),
+- **Frontend:** Vanilla JS + Three.js (STLLoader/OBJLoader/3MFLoader + OrbitControls),
   keine Build-Pipeline nötig. Bewusst **kein** Druckbett-Gitter im Viewer — wir wissen
-  nicht, wie der Ersteller das Objekt ausgerichtet hat, ein Gitter würde eine falsche
-  "Unten"-Seite suggerieren.
+  nicht, wie der Ersteller das Objekt im Detail ausgerichtet hat, ein Gitter würde eine
+  falsche "Unten"-Seite suggerieren. **Achsen-Korrektur (26.09.2026):** STL/3MF sind in
+  der 3D-Druck-Welt so gut wie immer Z-up (Z = Druckhöhe), three.js ist Y-up — dagegen
+  wird pauschal korrigiert (reine Rotation, keine Annahme über die individuelle
+  Objektausrichtung). Für OBJ gilt das **nicht**: dort ist Y-up vs. Z-up je nach
+  Export-Tool uneinheitlich, eine pauschale Korrektur würde manche Dateien falsch statt
+  richtig ausrichten — bekannte Einschränkung.
 - **Thumbnails:** Puppeteer-core + Chromium (per `apk` im Image), rendert
   `public/render.html` headless und liest das `<canvas>` als PNG aus.
 - **Verteilung:** Ein Container pro Nutzer, läuft lokal bei jedem selbst

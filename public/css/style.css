@@ -80,6 +80,17 @@ body {
 }
 .btn-settings:hover { border-color: var(--accent); }
 
+.lang-toggle { position: absolute; top: 1.25rem; left: 0; display: flex; gap: 0.35rem; }
+.lang-btn {
+  background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+  padding: 0.3rem 0.5rem; cursor: pointer; line-height: 1;
+  display: flex; align-items: center; justify-content: center;
+  opacity: 0.55; filter: grayscale(40%);
+}
+.lang-btn svg { display: block; border-radius: 2px; }
+.lang-btn:hover { opacity: 0.85; }
+.lang-btn.active { opacity: 1; filter: none; border-color: var(--accent); }
+
 /* ---- Stat-Kacheln ---- */
 .stats {
   display: grid;

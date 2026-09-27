@@ -31,6 +31,15 @@ fs.mkdirSync(MESH_DIR, { recursive: true });
 const PORT = process.env.PORT || 3000;
 const CHROME_PATH = process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium';
 const RENDERABLE_EXT = new Set(['stl', '3mf', 'obj']);
+
+// Wird hochgezaehlt, wenn sich die Render-LOGIK selbst aendert (z.B. eine neue
+// Koordinaten-/Ausrichtungskorrektur wie am 26.09.2026) - nicht bei Datei-
+// Aenderungen (dafuer gibt es schon mtime). server/index.js vergleicht das mit
+// files.render_version: weicht es ab, gilt ein vorhandenes Thumbnail/GLB als
+// veraltet und wird automatisch neu erzeugt, auch wenn die Quelldatei selbst
+// unveraendert ist. So muss nach einem Render-Logik-Fix niemand manuell den
+// Cache leeren.
+const RENDER_VERSION = 2; // 1 = initial, 2 = Z-up->Y-up-Korrektur fuer STL/3MF (26.09.2026)
 const MAX_CONCURRENT_RENDERS = 2;
 const FAILURE_COOLDOWN_MS = 10 * 60 * 1000; // 10 Minuten, bevor eine gescheiterte Datei erneut versucht wird
 const RENDER_TIMEOUT_MS = 45000; // Software-Rendering (SwiftShader) ist langsam, grosszuegig bemessen
@@ -129,6 +138,22 @@ function meshPath(fileId) {
 function getCachedMeshPath(fileId) {
   const p = meshPath(fileId);
   return fs.existsSync(p) ? p : null;
+}
+
+// Liefert einen "Versions"-Wert (mtime der gecachten Datei in ms) fuer
+// Cache-Busting in der Frontend-URL. Der Thumbnail-/Mesh-Endpoint setzt
+// einen langen Cache-Control-Header (24h); ohne einen sich aendernden
+// Query-Parameter wuerden Browser nach einer Neu-Generierung (z.B. durch
+// RENDER_VERSION-Bump oder geaenderte Quelldatei) bis zu 24h lang das alte,
+// falsch ausgerichtete Bild aus ihrem eigenen Cache anzeigen - selbst wenn
+// der Server laengst ein korrektes Bild ausliefert. Gibt 0 zurueck, wenn
+// (noch) keine Cache-Datei existiert.
+function getThumbnailVersion(fileId) {
+  try { return Math.round(fs.statSync(thumbnailPath(fileId)).mtimeMs); } catch { return 0; }
+}
+
+function getMeshVersion(fileId) {
+  try { return Math.round(fs.statSync(meshPath(fileId)).mtimeMs); } catch { return 0; }
 }
 
 // Loescht gecachte Thumbnail/GLB-Dateien fuer eine Datei-ID (z.B. weil sich
@@ -268,4 +293,4 @@ async function closeBrowser() {
   }
 }
 
-module.exports = { generateThumbnail, getCachedThumbnailPath, getCachedMeshPath, invalidateCache, isRenderable, THUMB_DIR, MESH_DIR, closeBrowser };
+module.exports = { generateThumbnail, getCachedThumbnailPath, getCachedMeshPath, getThumbnailVersion, getMeshVersion, invalidateCache, isRenderable, RENDER_VERSION, THUMB_DIR, MESH_DIR, closeBrowser };

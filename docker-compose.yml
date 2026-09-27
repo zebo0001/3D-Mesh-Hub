@@ -1,7 +1,7 @@
 services:
-  3d-datei-archiv:
+  3d-mesh-hub:
     build: .
-    container_name: 3d-datei-archiv
+    container_name: 3d-mesh-hub
     restart: unless-stopped
     shm_size: '1gb'  # Chromium (Thumbnail-Rendering) braucht mehr als das Docker-Standard-/dev/shm
     ports:

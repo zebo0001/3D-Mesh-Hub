@@ -4,6 +4,7 @@ import { STLLoader } from 'three/addons/loaders/STLLoader.js';
 import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
 import { ThreeMFLoader } from 'three/addons/loaders/3MFLoader.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { t } from './i18n.js';
 
 // HINWEIS (24.09.2026): Es gab hier kurzzeitig einen Versuch, das Parsen in
 // einen Web Worker auszulagern (parse-worker.js, mittlerweile ungenutzt).
@@ -115,7 +116,7 @@ function clearCurrent() {
   }
 }
 
-export function loadIntoViewer(containerId, fileId, ext, sizeBytes) {
+export function loadIntoViewer(containerId, fileId, ext, sizeBytes, meshVersion = 0) {
   const container = document.getElementById(containerId);
   if (!container) return;
   ensureScene();
@@ -126,8 +127,8 @@ export function loadIntoViewer(containerId, fileId, ext, sizeBytes) {
   loadingEl.className = 'viewer-loading';
   const mb = sizeBytes ? Math.round(sizeBytes / (1024 * 1024)) : null;
   loadingEl.textContent = mb && mb >= 15
-    ? `Lädt Modell… (${mb} MB – bei großen Dateien kann die Seite kurz nicht reagieren)`
-    : 'Lädt Modell…';
+    ? t('viewer.loadingLarge', { mb })
+    : t('viewer.loading');
   container.appendChild(loadingEl);
   const clearLoading = () => loadingEl.remove();
 
@@ -139,6 +140,7 @@ export function loadIntoViewer(containerId, fileId, ext, sizeBytes) {
       clearLoading();
       geometry.computeVertexNormals();
       currentMesh = new THREE.Mesh(geometry, material);
+      currentMesh.rotation.x = -Math.PI / 2; // Z-up (Druckdatei) -> Y-up (three.js), siehe render.js
       scene.add(currentMesh);
       frameObject(currentMesh);
     }, undefined, (err) => { clearLoading(); showViewerError(container, err); });
@@ -151,7 +153,7 @@ export function loadIntoViewer(containerId, fileId, ext, sizeBytes) {
       frameObject(currentMesh);
     }, undefined, (err) => { clearLoading(); showViewerError(container, err); });
   } else if (ext === '3mf') {
-    new GLTFLoader().load(`/api/files/${fileId}/mesh`, (gltf) => {
+    new GLTFLoader().load(`/api/files/${fileId}/mesh?v=${meshVersion}`, (gltf) => {
       clearLoading();
       currentMesh = gltf.scene;
       scene.add(currentMesh);
@@ -162,6 +164,7 @@ export function loadIntoViewer(containerId, fileId, ext, sizeBytes) {
       // Dateien kurz einfrieren, siehe Kommentar oben).
       new ThreeMFLoader().load(url, (object) => {
         clearLoading();
+        object.rotation.x = -Math.PI / 2; // gleiche Z-up-Korrektur wie beim GLB-Cache-Pfad
         currentMesh = object;
         scene.add(currentMesh);
         frameObject(currentMesh);
@@ -169,7 +172,7 @@ export function loadIntoViewer(containerId, fileId, ext, sizeBytes) {
     });
   } else {
     clearLoading();
-    showViewerError(container, new Error('Für dieses Dateiformat gibt es noch keine 3D-Vorschau.'));
+    showViewerError(container, new Error(t('viewer.noPreview')));
   }
 }
 
@@ -177,6 +180,6 @@ function showViewerError(container, err) {
   const msg = document.createElement('div');
   msg.className = 'hint';
   msg.style.padding = '0.75rem';
-  msg.textContent = 'Vorschau nicht möglich: ' + (err && err.message ? err.message : String(err));
+  msg.textContent = t('viewer.previewFailed', { msg: err && err.message ? err.message : String(err) });
   container.appendChild(msg);
 }

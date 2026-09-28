@@ -41,6 +41,9 @@ const app = express();
 app.use(express.json());
 app.use(express.static(path.join(__dirname, '..', 'public')));
 
+const APP_VERSION = require('../package.json').version;
+app.get('/api/version', (req, res) => res.json({ version: APP_VERSION }));
+
 // ---- Ordner-Browser innerhalb von DATA_ROOT (fuer die Bibliotheks-Auswahl im UI) ----
 app.get('/api/browse', (req, res) => {
   const relPath = req.query.path ? String(req.query.path) : '';

@@ -634,6 +634,12 @@ loadAll()
     gridEl.innerHTML = `<p class="hint">${t('grid.loadError', { msg: err.message })}</p>`;
   });
 
+// ---- Versionsanzeige (Footer + Info-Dialog) ----
+api('/api/version').then(({ version }) => {
+  document.getElementById('app-version').textContent = version;
+  document.getElementById('info-version').textContent = t('info.version', { version });
+}).catch(() => { /* nicht kritisch - Versionsanzeige bleibt einfach leer */ });
+
 // ---- Fortschritt des Hintergrund-Vorwaermens (Containerstart/periodischer
 // Scan, siehe server/index.js) - bewusst als "X/Y erledigt"-Zaehler, keine
 // Zeitschaetzung: wie lange ein einzelnes Rendern braucht, schwankt zwischen

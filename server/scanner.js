@@ -33,6 +33,14 @@ function walk(dirAbs, dirRel, out, recursive) {
     return; // z.B. Berechtigungsproblem - Ordner einfach ueberspringen
   }
   for (const entry of entries) {
+    // Versteckte Dateien/Ordner ueberspringen - vor allem "._dateiname.stl"
+    // (macOS AppleDouble-Metadaten-Sidecar-Dateien, entstehen beim Schreiben
+    // auf nicht-Apple-Dateisysteme/Netzwerk-Freigaben z.B. via Nextcloud-Sync)
+    // haben dieselbe Endung wie das echte Modell und wuerden sonst als
+    // zusaetzliche, kaputte "Datei" doppelt im Grid auftauchen. Trifft auch
+    // .DS_Store, .git etc.
+    if (entry.name.startsWith('.')) continue;
+
     const abs = path.join(dirAbs, entry.name);
     const rel = path.join(dirRel, entry.name);
     if (entry.isDirectory()) {

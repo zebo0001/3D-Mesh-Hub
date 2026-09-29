@@ -10,6 +10,21 @@
 // Skalierungs-Schaetzung in server/estimate.js (siehe Vault
 // "Filament-Verbrauch-Integration-Konzept"). Vorher lieferte dieser Parser
 // GAR KEINE Geometrie, nur eine grobe Vertex-Zahl-Naeherung.
+//
+// Bugfix (29.09.2026, Nutzer-Testfall Woman.3mf von BambuStudio 1.3.9.4):
+// mehrteilige Bambu Studio/OrcaSlicer-Exporte legen das eigentliche Mesh oft
+// NICHT in 3D/3dmodel.model ab, sondern in separaten Objekt-Dateien (z.B.
+// 3D/Objects/object_1.model), die von der Root-Datei nur per
+// <component p:path="..."/> referenziert werden - exakt dasselbe
+// Strukturmuster, das schon den three.js-3MFLoader zum Absturz brachte
+// (siehe scripts/patch-3mfloader.js). Der erste Entwurf dieses Parsers hat
+// nur 3D/3dmodel.model durchsucht und bei solchen Dateien IMMER
+// geometry:null geliefert. Fix: statt die <component>-Referenzen exakt
+// aufzuloesen (Pfad+Transform), wird jede *.model-Datei im ZIP nach
+// <mesh>-Bloecken durchsucht und aufsummiert - fuer den ueblichen Fall
+// (jedes Mesh kommt in genau einer Datei vor) liefert das dieselbe
+// Gesamtsumme wie eine vollstaendige Referenz-Aufloesung, ohne deren
+// Komplexitaet.
 const AdmZip = require('adm-zip');
 
 // Bambu Studio/Marketplace-Downloads legen Felder wie "Description" oft als
@@ -146,21 +161,25 @@ function mergeBbox(target, src) {
   }
 }
 
-function parseMeshGeometry(modelXml) {
-  const meshBlocks = modelXml.match(/<mesh>[\s\S]*?<\/mesh>/gi) || [];
-  if (meshBlocks.length === 0) return null;
-
+// modelXmls: Array aus einer oder mehreren XML-Strings - die Root-Datei
+// (3D/3dmodel.model) UND, falls vorhanden, separate Objekt-Teildateien
+// (siehe Bugfix-Kommentar oben). Jede Datei kann null, ein oder mehrere
+// <mesh>-Bloecke enthalten; alle werden gleich behandelt und aufsummiert.
+function parseMeshGeometry(modelXmls) {
   let volume = 0;
   let area = 0;
   let triangles = 0;
   const bbox = { min: [Infinity, Infinity, Infinity], max: [-Infinity, -Infinity, -Infinity] };
 
-  for (const block of meshBlocks) {
-    const r = parseMeshBlock(block);
-    volume += r.volume;
-    area += r.area;
-    triangles += r.triCount;
-    mergeBbox(bbox, r.bbox);
+  for (const xml of modelXmls) {
+    const meshBlocks = xml.match(/<mesh>[\s\S]*?<\/mesh>/gi) || [];
+    for (const block of meshBlocks) {
+      const r = parseMeshBlock(block);
+      volume += r.volume;
+      area += r.area;
+      triangles += r.triCount;
+      mergeBbox(bbox, r.bbox);
+    }
   }
   if (triangles === 0) return null;
   return { triangles, bbox, volumeMm3: Math.abs(volume), areaMm2: area };
@@ -176,7 +195,15 @@ function parse3MF(buffer) {
     const modelXml = modelEntry.getData().toString('utf8');
     const coreMeta = parseCoreMetadata(modelXml);
     const vertexCount = countVertices(modelXml);
-    const geometry = parseMeshGeometry(modelXml);
+
+    // Geometrie: nicht nur aus der Root-Datei, sondern aus ALLEN *.model-
+    // Teilen im ZIP summieren (siehe Bugfix-Kommentar oben). Die Root-Datei
+    // ist durch den Filter automatisch mit dabei (ihr Name endet ebenfalls
+    // auf ".model").
+    const allModelXmls = zip.getEntries()
+      .filter(e => /\.model$/i.test(e.entryName))
+      .map(e => e.getData().toString('utf8'));
+    const geometry = parseMeshGeometry(allModelXmls.length ? allModelXmls : [modelXml]);
 
     // Slicer-spezifische Zusatzdateien einsammeln (best effort, Name variiert je Slicer)
     const slicerFiles = zip.getEntries()
@@ -188,7 +215,7 @@ function parse3MF(buffer) {
       coreMeta,
       vertexCountApprox: vertexCount,
       slicerFilesFound: slicerFiles,
-      geometry, // null, falls kein <mesh> gefunden/geparst werden konnte
+      geometry, // null, falls in keiner *.model-Datei ein <mesh> gefunden/geparst werden konnte
     };
   } catch (err) {
     return { ok: false, error: String(err && err.message || err) };

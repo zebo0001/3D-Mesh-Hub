@@ -751,3 +751,10 @@ async function pollScanStatus() {
 }
 pollScanStatus();
 setInterval(pollScanStatus, 3000);
+
+// ---- Versionsanzeige (Footer + Info-Dialog) ----
+api('/api/version').then(({ version }) => {
+  document.getElementById('app-version').textContent = version;
+  document.getElementById('info-version').textContent = t('info.version', { version });
+}).catch(() => { /* nicht kritisch - Versionsanzeige bleibt einfach leer */ });
+

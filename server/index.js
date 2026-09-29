@@ -39,6 +39,10 @@ function buildLocalFileUrl(relPath) {
 }
 
 const app = express();
+
+// ---- Versions-Endpoint (siehe package.json version) ----
+const APP_VERSION = require('../package.json').version;
+app.get('/api/version', (req, res) => res.json({ version: APP_VERSION }));
 app.use(express.json());
 app.use(express.static(path.join(__dirname, '..', 'public')));
 

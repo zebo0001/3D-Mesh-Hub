@@ -1,0 +1,31 @@
+# Stufe 3: echte Slicer-Anbindung fuer die Filament-Skalierungs-Schaetzung
+# (opt-in). Siehe README + Obsidian-Konzeptnotiz "Filament-Verbrauch-
+# Integration-Konzept" fuer Hintergrund.
+#
+# Standardmaessig nutzt der Hub nur die geometrische Naeherung (Stufe 2,
+# keine externe Abhaengigkeit). Diese Datei fuegt einen zweiten, internen
+# Container hinzu, der Modelle mit einem echten Slicer (OrcaSlicer) slicet
+# und den tatsaechlichen Gramm-Wert aus dem Ergebnis ausliest - langsamer
+# (Sekunden statt Millisekunden) und wartungsaufwaendiger (ein Drucker-/
+# Filament-/Prozess-Profil muss gepflegt werden), aber genauer.
+#
+# Nutzung (zusaetzlich zur normalen docker-compose.yml, nicht stattdessen):
+# 1. docker compose -f docker-compose.yml -f docker-compose.slicer.yml up --build -d
+# 2. In den Hub-Einstellungen: Berechnungsmethode auf "Automatisch" oder
+#    "Nur Slicer" stellen und ein Profil hochladen (in OrcaSlicer unter
+#    "Export Configs" als Drucker-/Prozess-/Filament-JSON exportierbar).
+#
+# Der Slicer-Container ist NICHT nach aussen published (kein "ports:"),
+# nur ueber das interne Docker-Netzwerk vom Hub aus erreichbar.
+services:
+  3d-mesh-hub:
+    environment:
+      - SLICER_SERVICE_URL=http://slicer-service:4001
+
+  slicer-service:
+    build: ./slicer-service
+    container_name: 3d-mesh-hub-slicer
+    restart: unless-stopped
+    # Slicing ist CPU-intensiv und kann je nach Modell/Profil 10-60s dauern -
+    # kein shm_size-Bedarf wie beim Thumbnail-Chromium, da kein WebGL-Canvas
+    # gerendert wird, nur die CLI-Slicing-Pipeline laeuft.

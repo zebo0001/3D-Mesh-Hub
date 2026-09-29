@@ -166,6 +166,49 @@ Slicer-Standardwerte: 0.8mm Wandstärke, 15% Infill.
 </p>
 </div>
 
+<!-- Stufe 3 (echte Slicer-Anbindung, siehe Vault
+"Filament-Verbrauch-Integration-Konzept" Abschnitt "Stufe 3"): Wahl der
+Berechnungsmethode + optionale Slicer-Service-Anbindung + Profil-Verwaltung.
+Der Slicer-Container ist ein opt-in Zusatzdienst (docker-compose.slicer.yml) -
+ohne ihn bleibt "Nur Schätzung" (Stufe 2) das einzig sinnvolle Ergebnis. -->
+<div class="settings-row">
+<label data-i18n="lib.calcModeLabel">Berechnungsmethode für die Skalierungs-Schätzung:</label>
+<label class="inline-check"><input type="radio" name="calc-mode" value="estimate_only" /><span data-i18n="lib.calcModeEstimateOnly">Nur Schätzung (Stufe 2, geometrisch)</span></label>
+<label class="inline-check"><input type="radio" name="calc-mode" value="auto" /><span data-i18n="lib.calcModeAuto">Automatisch (Slicer, bei Fehler zurück auf Schätzung)</span></label>
+<label class="inline-check"><input type="radio" name="calc-mode" value="slicer_only" /><span data-i18n="lib.calcModeSlicerOnly">Nur Slicer (Stufe 3, kein Fallback)</span></label>
+<p class="hint" data-i18n="lib.calcModeHint">
+Der echte Slicer (Stufe 3) braucht den optionalen Slicer-Service-Container
+(siehe docker-compose.slicer.yml) sowie ein aktives Profil unten. Ohne
+beides bleibt "Automatisch" bei der Schätzung.
+</p>
+</div>
+
+<div class="settings-row">
+<label for="slicer-url-input" data-i18n="lib.slicerUrlLabel">Slicer-Service-URL:</label>
+<input type="text" id="slicer-url-input" data-i18n-placeholder="lib.slicerUrlPlaceholder" placeholder="z.B. http://slicer-service:4001" />
+<p class="hint" data-i18n="lib.slicerUrlHint">
+Nur nötig für "Automatisch"/"Nur Slicer". Interne Adresse des
+Slicer-Containers, siehe docker-compose.slicer.yml.
+</p>
+</div>
+
+<div class="settings-row">
+<label data-i18n="lib.slicerProfilesLabel">Slicer-Profile (OrcaSlicer "Export Configs"):</label>
+<ul id="slicer-profile-list" class="lib-list"></ul>
+<form id="slicer-profile-form" class="slicer-profile-form">
+<input type="text" id="slicer-profile-name" data-i18n-placeholder="slicer.profileNamePlaceholder" placeholder="z.B. Bambu X1C PLA Standard" required />
+<label><span data-i18n="slicer.printerLabel">Drucker-Profil (JSON)</span><input type="file" id="slicer-profile-printer" accept="application/json,.json" required /></label>
+<label><span data-i18n="slicer.processLabel">Prozess-Profil (JSON)</span><input type="file" id="slicer-profile-process" accept="application/json,.json" required /></label>
+<label><span data-i18n="slicer.filamentLabel">Filament-Profil (JSON)</span><input type="file" id="slicer-profile-filament" accept="application/json,.json" required /></label>
+<button type="submit" data-i18n="slicer.upload">Profil hochladen</button>
+<span class="hint" id="slicer-profile-status"></span>
+</form>
+<p class="hint" data-i18n="slicer.profilesHint">
+In OrcaSlicer unter Datei → Export Configs als Drucker-/Prozess-/Filament-JSON
+exportierbar. Nur ein Profil kann gleichzeitig aktiv sein.
+</p>
+</div>
+
 <button id="btn-close-libraries" data-i18n="lib.close">Schließen</button>
 </div>
 </dialog>

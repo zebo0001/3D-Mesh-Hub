@@ -305,3 +305,27 @@ dialog button:hover { border-color: var(--accent); }
 .estimate-scale-row input { width: 5rem; background: var(--panel-2); color: var(--text); border: 1px solid var(--border); border-radius: 8px; padding: 0.3rem 0.5rem; font-family: inherit; }
 #estimate-result { font-weight: 600; margin-bottom: 0.25rem; }
 #estimate-wall-input, #estimate-infill-input { width: 6rem; margin-right: 1rem; }
+
+/* ---- Stufe 3: Slicer-Quelle-Badge in der Detailansicht (29.09.2026, siehe
+Vault "Filament-Verbrauch-Integration-Konzept" Abschnitt "Stufe 3") ---- */
+.source-badge {
+display: inline-block; font-size: 0.7rem; font-weight: 700; letter-spacing: 0.02em;
+padding: 0.15rem 0.5rem; border-radius: 999px; margin-bottom: 0.4rem;
+border: 1px solid var(--border);
+}
+.source-badge[hidden] { display: none; }
+.source-badge-slicer { background: rgba(53, 208, 192, 0.15); color: var(--accent-cyan); border-color: var(--accent-cyan); }
+.source-badge-estimate { background: var(--panel); color: var(--muted); cursor: help; }
+
+/* ---- Stufe 3: Slicer-Profil-Upload-Formular im Bibliotheks-Dialog ---- */
+.slicer-profile-form { display: flex; flex-direction: column; gap: 0.4rem; margin: 0.5rem 0; }
+.slicer-profile-form input[type="text"] {
+background: var(--panel-2); color: var(--text); border: 1px solid var(--border);
+border-radius: 8px; padding: 0.4rem 0.6rem; font-family: inherit; font-size: 0.85rem;
+}
+.slicer-profile-form label {
+display: flex; flex-direction: column; gap: 0.2rem; font-size: 0.78rem; color: var(--muted); font-weight: 500;
+}
+.slicer-profile-form input[type="file"] { font-size: 0.78rem; color: var(--muted); }
+.slicer-profile-form button { align-self: flex-start; }
+#slicer-profile-list li strong { color: var(--accent-cyan); font-weight: 700; }

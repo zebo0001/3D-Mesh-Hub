@@ -54,6 +54,20 @@ function walk(dirAbs, dirRel, out, recursive) {
   }
 }
 
+// Einheitliches Geometrie-Objekt aus dem Rueckgabewert von parseSTL()/
+// parse3MF().geometry bauen - gemeinsames Format fuer geometry_json, damit
+// server/estimate.js (Skalierungs-Schaetzung, seit 29.09.2026) und das
+// Frontend nicht zwischen STL/3MF unterscheiden muessen. "Approx", weil
+// beide Werte nur bei wasserdichten Meshes exakt sind.
+function toGeometryJson(result) {
+  return {
+    triangles: result.triangles,
+    bbox: result.bbox,
+    volumeMm3Approx: result.volumeMm3,
+    surfaceAreaMm2Approx: result.areaMm2,
+  };
+}
+
 function scanLibrary(libRelPath, recursive = true) {
   const libAbs = safeResolve(libRelPath);
   const found = [];
@@ -94,15 +108,22 @@ function scanLibrary(libRelPath, recursive = true) {
     if (f.ext === '.stl') {
       const buf = fs.readFileSync(f.abs);
       const result = parseSTL(buf);
-      geometry = result.ok
-        ? { triangles: result.triangles, bbox: result.bbox, volumeMm3Approx: result.volumeMm3 }
-        : { error: result.error };
+      geometry = result.ok ? toGeometryJson(result) : { error: result.error };
     } else if (f.ext === '.3mf') {
       const buf = fs.readFileSync(f.abs);
       const result = parse3MF(buf);
       embeddedMeta = result.ok
         ? { coreMeta: result.coreMeta, vertexCountApprox: result.vertexCountApprox, slicerFilesFound: result.slicerFilesFound }
         : { error: result.error };
+      // Seit 29.09.2026: parse3MF() liefert zusaetzlich echte Mesh-Geometrie
+      // (vorher gar keine, siehe Commit-Historie/Vault). result.geometry ist
+      // null, wenn kein <mesh> gefunden wurde (z.B. reine Baugruppen-Datei
+      // ohne eigene Geometrie) - dann bleibt geometry hier bewusst null,
+      // genau wie bei einem STL-Parse-Fehler zeigt das Frontend dann einfach
+      // keine Mass-/Volumenangaben an.
+      if (result.ok && result.geometry) {
+        geometry = toGeometryJson(result.geometry);
+      }
     } else if (f.ext === '.obj') {
       const buf = fs.readFileSync(f.abs);
       const result = parseOBJ(buf);

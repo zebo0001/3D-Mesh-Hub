@@ -1,205 +1,219 @@
 <!doctype html>
 <html lang="de">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>3D Mesh Hub</title>
-  <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
-  <link rel="icon" href="/favicon.ico" sizes="32x32" />
-  <link rel="icon" href="/favicon-16x16.png" sizes="16x16" type="image/png" />
-  <link rel="icon" href="/favicon-32x32.png" sizes="32x32" type="image/png" />
-  <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
-  <script>
-    // Vor dem Stylesheet ausgefuehrt, damit beim Laden nicht kurz das falsche
-    // Theme aufblitzt ("Flash of wrong theme"). 'system' (Standard) setzt
-    // bewusst KEIN Attribut - das erledigt dann die @media-Regel in style.css.
-    (function () {
-      try {
-        var pref = localStorage.getItem('theme');
-        if (pref === 'light' || pref === 'dark') {
-          document.documentElement.setAttribute('data-theme', pref);
-        }
-      } catch (err) { /* localStorage evtl. blockiert - bleibt beim Standard */ }
-    })();
-  </script>
-  <link rel="stylesheet" href="/css/style.css" />
-  <script type="importmap">
-  {
-    "imports": {
-      "three": "/vendor/three/build/three.module.js",
-      "three/addons/": "/vendor/three/jsm/"
-    }
-  }
-  </script>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>3D Mesh Hub</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+<link rel="icon" href="/favicon.ico" sizes="32x32" />
+<link rel="icon" href="/favicon-16x16.png" sizes="16x16" type="image/png" />
+<link rel="icon" href="/favicon-32x32.png" sizes="32x32" type="image/png" />
+<link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+<script>
+// Vor dem Stylesheet ausgefuehrt, damit beim Laden nicht kurz das falsche
+// Theme aufblitzt ("Flash of wrong theme"). 'system' (Standard) setzt
+// bewusst KEIN Attribut - das erledigt dann die @media-Regel in style.css.
+(function () {
+try {
+var pref = localStorage.getItem('theme');
+if (pref === 'light' || pref === 'dark') {
+document.documentElement.setAttribute('data-theme', pref);
+}
+} catch (err) { /* localStorage evtl. blockiert - bleibt beim Standard */ }
+})();
+</script>
+<link rel="stylesheet" href="/css/style.css" />
+<script type="importmap">
+{
+"imports": {
+"three": "/vendor/three/build/three.module.js",
+"three/addons/": "/vendor/three/jsm/"
+}
+}
+</script>
 </head>
 <body>
-  <div class="page">
-    <header class="hero">
-      <div class="settings-toggle">
-        <button id="btn-libraries" class="btn-settings" data-i18n="header.libraries">⚙ Bibliotheken</button>
-        <button id="btn-info" class="btn-settings" data-i18n="header.info">ℹ Info</button>
-      </div>
-      <div class="lang-toggle" id="lang-toggle">
-        <button class="lang-btn" id="btn-lang-de" title="Deutsch" aria-label="Deutsch"><svg viewBox="0 0 5 3" width="20" height="14" aria-hidden="true"><rect width="5" height="1" y="0" fill="#000"/><rect width="5" height="1" y="1" fill="#DD0000"/><rect width="5" height="1" y="2" fill="#FFCE00"/></svg></button>
-        <button class="lang-btn" id="btn-lang-en" title="English" aria-label="English"><svg viewBox="0 0 60 36" width="20" height="14" aria-hidden="true"><rect width="60" height="36" fill="#00247d"/><path d="M0,0 L60,36 M60,0 L0,36" stroke="#fff" stroke-width="6"/><path d="M0,0 L60,36 M60,0 L0,36" stroke="#cf142b" stroke-width="2"/><path d="M30,0 V36 M0,18 H60" stroke="#fff" stroke-width="10"/><path d="M30,0 V36 M0,18 H60" stroke="#cf142b" stroke-width="6"/></svg></button>
-      </div>
-      <div class="hero-brand">
-        <div class="brand-icon" aria-hidden="true">
-          <svg viewBox="0 0 48 48" width="40" height="40">
-            <polygon points="24,6 40,15 40,33 24,42 8,33 8,15" fill="none" stroke="url(#g)" stroke-width="2.5"/>
-            <line x1="24" y1="6" x2="24" y2="24" stroke="url(#g)" stroke-width="2.5"/>
-            <line x1="8" y1="15" x2="24" y2="24" stroke="url(#g)" stroke-width="2.5"/>
-            <line x1="40" y1="15" x2="24" y2="24" stroke="url(#g)" stroke-width="2.5"/>
-            <line x1="24" y1="24" x2="24" y2="42" stroke="url(#g)" stroke-width="2.5"/>
-            <defs>
-              <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
-                <stop offset="0" stop-color="#5b8ef5"/>
-                <stop offset="1" stop-color="#9b6bf0"/>
-              </linearGradient>
-            </defs>
-          </svg>
-        </div>
-        <h1>3D <span class="accent-text">Mesh</span> Hub</h1>
-      </div>
-      <p class="hero-subtitle" data-i18n="header.subtitle">Eigenes STL/3MF/OBJ-Archiv im Blick — durchsuchen, drehen, zoomen, eigene Notizen &amp; Tags</p>
-    </header>
+<div class="page">
+<header class="hero">
+<div class="settings-toggle">
+<button id="btn-libraries" class="btn-settings" data-i18n="header.libraries">⚙ Bibliotheken</button>
+<button id="btn-info" class="btn-settings" data-i18n="header.info">ℹ Info</button>
+</div>
+<div class="lang-toggle" id="lang-toggle">
+<button class="lang-btn" id="btn-lang-de" title="Deutsch" aria-label="Deutsch"><svg viewBox="0 0 5 3" width="20" height="14" aria-hidden="true"><rect width="5" height="1" y="0" fill="#000"/><rect width="5" height="1" y="1" fill="#DD0000"/><rect width="5" height="1" y="2" fill="#FFCE00"/></svg></button>
+<button class="lang-btn" id="btn-lang-en" title="English" aria-label="English"><svg viewBox="0 0 60 36" width="20" height="14" aria-hidden="true"><rect width="60" height="36" fill="#00247d"/><path d="M0,0 L60,36 M60,0 L0,36" stroke="#fff" stroke-width="6"/><path d="M0,0 L60,36 M60,0 L0,36" stroke="#cf142b" stroke-width="2"/><path d="M30,0 V36 M0,18 H60" stroke="#fff" stroke-width="10"/><path d="M30,0 V36 M0,18 H60" stroke="#cf142b" stroke-width="6"/></svg></button>
+</div>
+<div class="hero-brand">
+<div class="brand-icon" aria-hidden="true">
+<svg viewBox="0 0 48 48" width="40" height="40">
+<polygon points="24,6 40,15 40,33 24,42 8,33 8,15" fill="none" stroke="url(#g)" stroke-width="2.5"/>
+<line x1="24" y1="6" x2="24" y2="24" stroke="url(#g)" stroke-width="2.5"/>
+<line x1="8" y1="15" x2="24" y2="24" stroke="url(#g)" stroke-width="2.5"/>
+<line x1="40" y1="15" x2="24" y2="24" stroke="url(#g)" stroke-width="2.5"/>
+<line x1="24" y1="24" x2="24" y2="42" stroke="url(#g)" stroke-width="2.5"/>
+<defs>
+<linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+<stop offset="0" stop-color="#5b8ef5"/>
+<stop offset="1" stop-color="#9b6bf0"/>
+</linearGradient>
+</defs>
+</svg>
+</div>
+<h1>3D <span class="accent-text">Mesh</span> Hub</h1>
+</div>
+<p class="hero-subtitle" data-i18n="header.subtitle">Eigenes STL/3MF/OBJ-Archiv im Blick — durchsuchen, drehen, zoomen, eigene Notizen &amp; Tags</p>
+</header>
 
-    <section class="stats" id="stats">
-      <div class="stat-card"><div class="stat-value" id="stat-folders">–</div><div class="stat-label" data-i18n="stats.folders">Ordner</div></div>
-      <div class="stat-card"><div class="stat-value" id="stat-total">–</div><div class="stat-label" data-i18n="stats.total">Alle Dateien</div></div>
-      <div class="stat-card"><div class="stat-value" id="stat-stl">–</div><div class="stat-label">STL</div></div>
-      <div class="stat-card"><div class="stat-value" id="stat-3mf">–</div><div class="stat-label">3MF</div></div>
-      <div class="stat-card"><div class="stat-value" id="stat-obj">–</div><div class="stat-label">OBJ</div></div>
-    </section>
+<section class="stats" id="stats">
+<div class="stat-card"><div class="stat-value" id="stat-folders">–</div><div class="stat-label" data-i18n="stats.folders">Ordner</div></div>
+<div class="stat-card"><div class="stat-value" id="stat-total">–</div><div class="stat-label" data-i18n="stats.total">Alle Dateien</div></div>
+<div class="stat-card"><div class="stat-value" id="stat-stl">–</div><div class="stat-label">STL</div></div>
+<div class="stat-card"><div class="stat-value" id="stat-3mf">–</div><div class="stat-label">3MF</div></div>
+<div class="stat-card"><div class="stat-value" id="stat-obj">–</div><div class="stat-label">OBJ</div></div>
+</section>
 
-    <section class="toolbar">
-      <input type="search" id="search-input" data-i18n-placeholder="toolbar.searchPlaceholder" placeholder="Ordner und Dateien durchsuchen…" />
-      <div class="toolbar-group">
-        <button class="view-toggle active" id="btn-view-folders" data-i18n="toolbar.folders">Ordner</button>
-        <button class="view-toggle" id="btn-view-files" data-i18n="toolbar.files">Dateien</button>
-      </div>
-      <select id="sort-select">
-        <option value="name" data-i18n="toolbar.sortName">Name A–Z</option>
-        <option value="date" data-i18n="toolbar.sortDate">Zuletzt geändert</option>
-        <option value="size" data-i18n="toolbar.sortSize">Größte zuerst</option>
-      </select>
-      <button id="btn-scan" class="btn-primary" data-i18n="toolbar.rescan">↻ Neu scannen</button>
-      <span id="scan-status" class="hint"></span>
-    </section>
+<section class="toolbar">
+<input type="search" id="search-input" data-i18n-placeholder="toolbar.searchPlaceholder" placeholder="Ordner und Dateien durchsuchen…" />
+<div class="toolbar-group">
+<button class="view-toggle active" id="btn-view-folders" data-i18n="toolbar.folders">Ordner</button>
+<button class="view-toggle" id="btn-view-files" data-i18n="toolbar.files">Dateien</button>
+</div>
+<select id="sort-select">
+<option value="name" data-i18n="toolbar.sortName">Name A–Z</option>
+<option value="date" data-i18n="toolbar.sortDate">Zuletzt geändert</option>
+<option value="size" data-i18n="toolbar.sortSize">Größte zuerst</option>
+</select>
+<button id="btn-scan" class="btn-primary" data-i18n="toolbar.rescan">↻ Neu scannen</button>
+<span id="scan-status" class="hint"></span>
+</section>
 
-    <main class="content">
-      <div class="breadcrumb hint" id="breadcrumb" hidden></div>
-      <div class="grid" id="grid">
-        <p class="hint" data-i18n="grid.loading">Lade…</p>
-      </div>
-    </main>
-  </div>
+<main class="content">
+<div class="breadcrumb hint" id="breadcrumb" hidden></div>
+<div class="grid" id="grid">
+<p class="hint" data-i18n="grid.loading">Lade…</p>
+</div>
+</main>
+</div>
 
-  <!-- Schwebende Fortschrittsanzeige waehrend Thumbnails im Hintergrund gerendert werden -->
-  <div class="thumb-progress" id="thumb-progress" hidden>
-    <span class="spinner" aria-hidden="true"></span>
-    <span id="thumb-progress-text">Vorschaubilder werden geladen…</span>
-  </div>
+<!-- Schwebende Fortschrittsanzeige waehrend Thumbnails im Hintergrund gerendert werden -->
+<div class="thumb-progress" id="thumb-progress" hidden>
+<span class="spinner" aria-hidden="true"></span>
+<span id="thumb-progress-text">Vorschaubilder werden geladen…</span>
+</div>
 
-  <!-- Detail-/Viewer-Overlay -->
-  <div class="overlay" id="overlay" hidden>
-    <div class="overlay-panel">
-      <button class="overlay-close" id="btn-close-detail">✕</button>
-      <div id="detail"></div>
-    </div>
-  </div>
+<!-- Detail-/Viewer-Overlay -->
+<div class="overlay" id="overlay" hidden>
+<div class="overlay-panel">
+<button class="overlay-close" id="btn-close-detail">✕</button>
+<div id="detail"></div>
+</div>
+</div>
 
-  <!-- Bibliotheks-Dialog: Ordnerauswahl innerhalb des gemounteten Datenordners -->
-  <dialog id="dlg-libraries">
-    <h2 data-i18n="lib.title">Bibliotheken (Unterordner von /data)</h2>
-    <p class="hint" data-i18n-html="lib.intro">
-      Der gesamte gemountete Ordner ist unter <code>/data</code> sichtbar.
-      Wähle hier die Unterordner aus, die durchsucht werden sollen.
-    </p>
-    <div id="lib-current-path"></div>
-    <ul id="lib-browser" class="browser-list"></ul>
-    <div class="dlg-actions">
-      <ul id="lib-list" class="lib-list"></ul>
+<!-- Bibliotheks-Dialog: Ordnerauswahl innerhalb des gemounteten Datenordners -->
+<dialog id="dlg-libraries">
+<h2 data-i18n="lib.title">Bibliotheken (Unterordner von /data)</h2>
+<p class="hint" data-i18n-html="lib.intro">
+Der gesamte gemountete Ordner ist unter <code>/data</code> sichtbar.
+Wähle hier die Unterordner aus, die durchsucht werden sollen.
+</p>
+<div id="lib-current-path"></div>
+<ul id="lib-browser" class="browser-list"></ul>
+<div class="dlg-actions">
+<ul id="lib-list" class="lib-list"></ul>
 
-      <div class="settings-row">
-        <label for="scan-interval-select" data-i18n="lib.scanIntervalLabel">Automatischer Hintergrund-Scan alle:</label>
-        <select id="scan-interval-select"></select>
-        <p class="hint" data-i18n="lib.scanIntervalHint">
-          Prüft periodisch auf neue/geänderte/entfernte Dateien und erzeugt fehlende
-          Vorschaubilder direkt im Hintergrund (siehe README). Eine Änderung greift
-          spätestens beim nächsten Durchlauf, kein Neustart nötig.
-        </p>
-      </div>
+<div class="settings-row">
+<label for="scan-interval-select" data-i18n="lib.scanIntervalLabel">Automatischer Hintergrund-Scan alle:</label>
+<select id="scan-interval-select"></select>
+<p class="hint" data-i18n="lib.scanIntervalHint">
+Prüft periodisch auf neue/geänderte/entfernte Dateien und erzeugt fehlende
+Vorschaubilder direkt im Hintergrund (siehe README). Eine Änderung greift
+spätestens beim nächsten Durchlauf, kein Neustart nötig.
+</p>
+</div>
 
-      <div class="settings-row">
-        <label for="theme-select" data-i18n="lib.themeLabel">Darstellung:</label>
-        <select id="theme-select">
-          <option value="system" data-i18n="lib.themeSystem">System</option>
-          <option value="dark" data-i18n="lib.themeDark">Dunkel</option>
-          <option value="light" data-i18n="lib.themeLight">Hell</option>
-        </select>
-      </div>
+<div class="settings-row">
+<label for="theme-select" data-i18n="lib.themeLabel">Darstellung:</label>
+<select id="theme-select">
+<option value="system" data-i18n="lib.themeSystem">System</option>
+<option value="dark" data-i18n="lib.themeDark">Dunkel</option>
+<option value="light" data-i18n="lib.themeLight">Hell</option>
+</select>
+</div>
 
-      <div class="settings-row">
-        <label class="inline-check">
-          <input type="checkbox" id="thumbnails-enabled-check" />
-          <span data-i18n="lib.thumbsLabel">Vorschaubilder automatisch erzeugen</span>
-        </label>
-        <p class="hint" data-i18n="lib.thumbsHint">
-          Bei sehr großen Archiven kann das Rendern der Vorschaubilder spürbar CPU
-          beanspruchen. Deaktiviert lässt die App Dateien nur mit Platzhalter anzeigen.
-        </p>
-      </div>
+<div class="settings-row">
+<label class="inline-check">
+<input type="checkbox" id="thumbnails-enabled-check" />
+<span data-i18n="lib.thumbsLabel">Vorschaubilder automatisch erzeugen</span>
+</label>
+<p class="hint" data-i18n="lib.thumbsHint">
+Bei sehr großen Archiven kann das Rendern der Vorschaubilder spürbar CPU
+beanspruchen. Deaktiviert lässt die App Dateien nur mit Platzhalter anzeigen.
+</p>
+</div>
 
-      <button id="btn-close-libraries" data-i18n="lib.close">Schließen</button>
-    </div>
-  </dialog>
+<!-- Annahmen fuer die Skalierungs-Schaetzung in der Dateiansicht (Stufe 2,
+29.09.2026, siehe Vault "Filament-Verbrauch-Integration-Konzept"). Global
+statt pro Datei - siehe Kommentar in server/index.js. -->
+<div class="settings-row">
+<label for="estimate-wall-input" data-i18n="lib.estimateWallLabel">Wandstärke für Schätzung (mm):</label>
+<input type="number" id="estimate-wall-input" min="0.1" max="10" step="0.1" />
+<label for="estimate-infill-input" data-i18n="lib.estimateInfillLabel">Infill-Anteil für Schätzung (%):</label>
+<input type="number" id="estimate-infill-input" min="0" max="100" step="1" />
+<p class="hint" data-i18n="lib.estimateHint">
+Wird für die Skalierungs-Schätzung in der Dateiansicht verwendet. Typische
+Slicer-Standardwerte: 0.8mm Wandstärke, 15% Infill.
+</p>
+</div>
 
-  <!-- Info-Dialog: neues Feature, was die App macht, Repo-Link -->
-  <dialog id="dlg-info">
-    <h2 data-i18n="info.title">Über 3D Mesh Hub</h2>
+<button id="btn-close-libraries" data-i18n="lib.close">Schließen</button>
+</div>
+</dialog>
 
-    <h3 data-i18n="info.featureTitle">Neu: "Am PC öffnen"</h3>
-    <p data-i18n="info.featureText">
-      In der Detail-Ansicht einer Datei gibt es einen Button "Am PC öffnen", der die
-      Datei im Windows Explorer markiert bzw. im zugeordneten Standardprogramm
-      (z.B. deinem Slicer) öffnet.
-    </p>
-    <p data-i18n="info.featureWhy">
-      Browser dürfen aus Sicherheitsgründen keine lokalen Programme direkt starten -
-      dafür ist einmalig ein kleines, kostenloses Helferskript nötig.
-    </p>
-    <p data-i18n="info.featureSteps">
-      Setup (nur Windows, ca. 30 Sekunden): ZIP herunterladen, entpacken, "install.ps1"
-      per Rechtsklick → "Mit PowerShell ausführen". Läuft komplett im Kontext deines
-      Windows-Benutzers - keine Adminrechte nötig, jederzeit rückgängig machbar.
-    </p>
-    <a class="btn-secondary" href="/downloads/meshhub-windows-helper.zip" download data-i18n="info.featureDownload">Helfer-Skript herunterladen (.zip)</a>
+<!-- Info-Dialog: neues Feature, was die App macht, Repo-Link -->
+<dialog id="dlg-info">
+<h2 data-i18n="info.title">Über 3D Mesh Hub</h2>
 
-    <h3 data-i18n="info.aboutTitle">Was ist 3D Mesh Hub?</h3>
-    <p data-i18n="info.aboutText">
-      Ein selbst gehostetes Archiv für deine STL-/3MF-/OBJ-Dateien: 3D-Vorschau direkt
-      im Browser, automatisch ausgelesene Metadaten, eigene Tags/Notizen/Status pro
-      Datei, Filament-Mengen-Erfassung. Läuft komplett lokal in Docker - keine Uploads,
-      keine Cloud, keine Registrierung.
-    </p>
+<h3 data-i18n="info.featureTitle">Neu: "Am PC öffnen"</h3>
+<p data-i18n="info.featureText">
+In der Detail-Ansicht einer Datei gibt es einen Button "Am PC öffnen", der die
+Datei im Windows Explorer markiert bzw. im zugeordneten Standardprogramm
+(z.B. deinem Slicer) öffnet.
+</p>
+<p data-i18n="info.featureWhy">
+Browser dürfen aus Sicherheitsgründen keine lokalen Programme direkt starten -
+dafür ist einmalig ein kleines, kostenloses Helferskript nötig.
+</p>
+<p data-i18n="info.featureSteps">
+Setup (nur Windows, ca. 30 Sekunden): ZIP herunterladen, entpacken, "install.ps1"
+per Rechtsklick → "Mit PowerShell ausführen". Läuft komplett im Kontext deines
+Windows-Benutzers - keine Adminrechte nötig, jederzeit rückgängig machbar.
+</p>
+<a class="btn-secondary" href="/downloads/meshhub-windows-helper.zip" download data-i18n="info.featureDownload">Helfer-Skript herunterladen (.zip)</a>
 
-    <p class="hint" data-i18n="info.macNote">
-      Hinweis für macOS: Docker Desktop braucht für den Datenordner ggf. eine
-      gesonderte Freigabe (Settings → Resources → File Sharing) - bei Ordnern
-      wie Dokumente/Desktop/Downloads zusätzlich eine macOS-Datenschutzfreigabe
-      (Datenschutz &amp; Sicherheit → Dateien und Ordner).
-    </p>
+<h3 data-i18n="info.aboutTitle">Was ist 3D Mesh Hub?</h3>
+<p data-i18n="info.aboutText">
+Ein selbst gehostetes Archiv für deine STL-/3MF-/OBJ-Dateien: 3D-Vorschau direkt
+im Browser, automatisch ausgelesene Metadaten, eigene Tags/Notizen/Status pro
+Datei, Filament-Mengen-Erfassung. Läuft komplett lokal in Docker - keine Uploads,
+keine Cloud, keine Registrierung.
+</p>
 
-    <h3 data-i18n="info.repoTitle">Quellcode</h3>
-    <p><a href="https://github.com/zebo0001/3D-Mesh-Hub" target="_blank" rel="noopener" data-i18n="info.repoLink">Repository ansehen</a></p>
+<p class="hint" data-i18n="info.macNote">
+Hinweis für macOS: Docker Desktop braucht für den Datenordner ggf. eine
+gesonderte Freigabe (Settings → Resources → File Sharing) - bei Ordnern
+wie Dokumente/Desktop/Downloads zusätzlich eine macOS-Datenschutzfreigabe
+(Datenschutz &amp; Sicherheit → Dateien und Ordner).
+</p>
 
-    <div class="dlg-actions">
-      <button id="btn-close-info" data-i18n="info.close">Schließen</button>
-    </div>
-  </dialog>
+<h3 data-i18n="info.repoTitle">Quellcode</h3>
+<p><a href="https://github.com/zebo0001/3D-Mesh-Hub" target="_blank" rel="noopener" data-i18n="info.repoLink">Repository ansehen</a></p>
 
-  <script type="module" src="/js/viewer.js"></script>
-  <script type="module" src="/js/app.js"></script>
+<div class="dlg-actions">
+<button id="btn-close-info" data-i18n="info.close">Schließen</button>
+</div>
+</dialog>
+
+<script type="module" src="/js/viewer.js"></script>
+<script type="module" src="/js/app.js"></script>
 </body>
 </html>

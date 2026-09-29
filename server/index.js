@@ -4,6 +4,7 @@ const express = require('express');
 const db = require('./db');
 const { scanAllLibraries, scanLibrary, safeResolve, DATA_ROOT } = require('./scanner');
 const thumbnails = require('./thumbnails');
+const { estimateScaledFilament } = require('./estimate');
 
 // ---- "Datei am PC oeffnen"-Link (file://) ----
 // HOST_DATA_ROOT ist der ECHTE Pfad auf dem Host-Rechner (aus .env DATA_ROOT),
@@ -111,7 +112,7 @@ app.post('/api/scan', (req, res) => {
   }
 });
 
-// ---- Einstellungen (aktuell: Intervall fuer den periodischen Hintergrund-Scan) ----
+// ---- Einstellungen (Scan-Intervall, Thumbnails, Skalierungs-Schaetzung) ----
 // Bewusst feste Presets statt freier Minutenzahl (User-Entscheidung
 // 25.09.2026: keine 5-Minuten-Feineinstellung, sondern grobe, sinnvolle
 // Stufen von "einmal pro Stunde" bis "mehrmals taeglich").
@@ -133,11 +134,35 @@ function getThumbnailsEnabled() {
   return row ? row.value !== 'false' : true;
 }
 
+// ---- Globale Annahmen fuer die Skalierungs-Schaetzung ("Stufe 2", siehe
+// server/estimate.js + Vault "Filament-Verbrauch-Integration-Konzept",
+// 29.09.2026). Bewusst global statt pro Datei (User-Entscheidung
+// 29.09.2026) - typische FDM-Druckeinstellungen aendern sich selten genug,
+// dass eine gemeinsame Annahme fuer alle Modelle in der Praxis reicht.
+// Defaults: 0.8mm Wandstaerke (2 Perimeter a 0.4mm Duese) und 15% Infill -
+// gaengige Slicer-Voreinstellungen, kein Messwert dieser Installation.
+const DEFAULT_WALL_THICKNESS_MM = 0.8;
+const DEFAULT_INFILL_FRACTION = 0.15;
+
+function getWallThicknessMm() {
+  const row = db.prepare("SELECT value FROM settings WHERE key = 'estimate_wall_thickness_mm'").get();
+  const n = row ? Number(row.value) : DEFAULT_WALL_THICKNESS_MM;
+  return Number.isFinite(n) && n > 0 && n <= 10 ? n : DEFAULT_WALL_THICKNESS_MM;
+}
+
+function getInfillFraction() {
+  const row = db.prepare("SELECT value FROM settings WHERE key = 'estimate_infill_fraction'").get();
+  const n = row ? Number(row.value) : DEFAULT_INFILL_FRACTION;
+  return Number.isFinite(n) && n >= 0 && n <= 1 ? n : DEFAULT_INFILL_FRACTION;
+}
+
 app.get('/api/settings', (req, res) => {
   res.json({
     scan_interval_minutes: getScanIntervalMinutes(),
     scan_interval_presets: SCAN_INTERVAL_PRESETS_MIN,
     thumbnails_enabled: getThumbnailsEnabled(),
+    estimate_wall_thickness_mm: getWallThicknessMm(),
+    estimate_infill_fraction: getInfillFraction(),
   });
 });
 
@@ -158,10 +183,32 @@ app.put('/api/settings', (req, res) => {
       ON CONFLICT(key) DO UPDATE SET value = excluded.value
     `).run(req.body.thumbnails_enabled ? 'true' : 'false');
   }
+  if (req.body.estimate_wall_thickness_mm !== undefined) {
+    const mm = Number(req.body.estimate_wall_thickness_mm);
+    if (!Number.isFinite(mm) || mm <= 0 || mm > 10) {
+      return res.status(400).json({ error: 'Ungueltige Wandstaerke (0-10mm erwartet)' });
+    }
+    db.prepare(`
+      INSERT INTO settings (key, value) VALUES ('estimate_wall_thickness_mm', ?)
+      ON CONFLICT(key) DO UPDATE SET value = excluded.value
+    `).run(String(mm));
+  }
+  if (req.body.estimate_infill_fraction !== undefined) {
+    const frac = Number(req.body.estimate_infill_fraction);
+    if (!Number.isFinite(frac) || frac < 0 || frac > 1) {
+      return res.status(400).json({ error: 'Ungueltiger Infill-Anteil (0-1 erwartet)' });
+    }
+    db.prepare(`
+      INSERT INTO settings (key, value) VALUES ('estimate_infill_fraction', ?)
+      ON CONFLICT(key) DO UPDATE SET value = excluded.value
+    `).run(String(frac));
+  }
   res.json({
     ok: true,
     scan_interval_minutes: getScanIntervalMinutes(),
     thumbnails_enabled: getThumbnailsEnabled(),
+    estimate_wall_thickness_mm: getWallThicknessMm(),
+    estimate_infill_fraction: getInfillFraction(),
   });
 });
 
@@ -271,6 +318,36 @@ app.put('/api/files/:id/meta', (req, res) => {
       filament_json=excluded.filament_json, updated_at=datetime('now')
   `).run(req.params.id, notes, tags, status, JSON.stringify(filament));
   res.json({ ok: true });
+});
+
+// ---- Skalierungs-Schaetzung ("Stufe 2") fuer eine Datei bei Zielgroesse ----
+// scale (Query-Param) in Prozent, z.B. ?scale=150 fuer 150%. Erwartet, dass
+// bereits eine Filamentmenge bei 100% eingetragen wurde (siehe
+// /api/files/:id/meta) UND dass die Geometrie Volumen+Oberflaeche liefert
+// (aktuell: STL immer, 3MF wenn ein <mesh> gefunden wurde, OBJ nie - siehe
+// parsers/obj.js). ok:false mit reason statt HTTP-Fehler, weil "keine
+// Schaetzung moeglich" ein normaler, erwartbarer Zustand ist (z.B. bevor
+// der Nutzer ueberhaupt eine Filamentmenge eingetragen hat), kein
+// Serverfehler.
+app.get('/api/files/:id/estimate', (req, res) => {
+  const row = db.prepare(`
+    SELECT f.geometry_json, m.filament_json
+    FROM files f LEFT JOIN file_meta m ON m.file_id = f.id
+    WHERE f.id = ?
+  `).get(req.params.id);
+  if (!row) return res.status(404).json({ error: 'Datei nicht in der Datenbank' });
+
+  let geometry = null;
+  try { geometry = row.geometry_json ? JSON.parse(row.geometry_json) : null; } catch { geometry = null; }
+  let filament = [];
+  try { filament = row.filament_json ? JSON.parse(row.filament_json) : []; } catch { filament = []; }
+
+  const scalePercent = req.query.scale !== undefined ? Number(req.query.scale) : 100;
+  const result = estimateScaledFilament(geometry, filament, scalePercent, {
+    wallThicknessMm: getWallThicknessMm(),
+    infillFraction: getInfillFraction(),
+  });
+  res.json(result);
 });
 
 // ---- Manuelle Ausrichtungs-Korrektur (siehe DEFAULT_ORIENTATION-Kommentar

@@ -297,3 +297,11 @@ dialog button:hover { border-color: var(--accent); }
   animation: thumb-spin 0.8s linear infinite;
 }
 @keyframes thumb-spin { to { transform: rotate(360deg); } }
+
+/* Skalierungs-Schaetzung (Stufe 2, 29.09.2026) */
+.estimate-box { margin-top: 1rem; padding: 0.75rem; border: 1px solid var(--border); border-radius: 8px; background: var(--panel-2); }
+.estimate-box h3 { margin: 0 0 0.5rem; font-size: 0.95rem; }
+.estimate-scale-row { display: flex; align-items: center; gap: 0.5rem; font-size: 0.85rem; color: var(--muted); margin-bottom: 0.5rem; }
+.estimate-scale-row input { width: 5rem; background: var(--panel-2); color: var(--text); border: 1px solid var(--border); border-radius: 8px; padding: 0.3rem 0.5rem; font-family: inherit; }
+#estimate-result { font-weight: 600; margin-bottom: 0.25rem; }
+#estimate-wall-input, #estimate-infill-input { width: 6rem; margin-right: 1rem; }

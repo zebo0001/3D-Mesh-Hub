@@ -19,8 +19,8 @@ let progressGeneration = 0;
 let allFiles = [];
 let allFolders = [];
 let currentView = 'folders'; // 'folders' | 'files'
-let folderFilter = null;     // rel_path einer Bibliothek/eines Ordners, wenn aus einer Ordnerkarte gedrillt
-let currentDetailId = null;  // Datei-ID, wenn das Detail-Overlay offen ist
+let folderFilter = null; // rel_path einer Bibliothek/eines Ordners, wenn aus einer Ordnerkarte gedrillt
+let currentDetailId = null; // Datei-ID, wenn das Detail-Overlay offen ist
 let searchTerm = '';
 let sortBy = 'name';
 
@@ -291,6 +291,7 @@ function renderDetail(f) {
     }
     if (geo.triangles != null) geoRows += `<tr><td>${t('detail.triangles')}</td><td>${geo.triangles.toLocaleString(localeTag())}</td></tr>`;
     if (geo.volumeMm3Approx != null) geoRows += `<tr><td>${t('detail.volume')}</td><td>${(geo.volumeMm3Approx / 1000).toFixed(2)} cm³</td></tr>`;
+    if (geo.surfaceAreaMm2Approx != null) geoRows += `<tr><td>${t('detail.surfaceArea')}</td><td>${(geo.surfaceAreaMm2Approx / 100).toFixed(1)} cm²</td></tr>`;
     // OBJ liefert (noch) keine Dreieckszahl/kein Volumen, siehe parsers/obj.js
     if (geo.vertices != null) geoRows += `<tr><td>${t('detail.vertices')}</td><td>${geo.vertices.toLocaleString(localeTag())}</td></tr>`;
     if (geo.faces != null) geoRows += `<tr><td>${t('detail.faces')}</td><td>${geo.faces.toLocaleString(localeTag())}</td></tr>`;
@@ -310,6 +311,24 @@ function renderDetail(f) {
 
   const openLocalCell = f.local_file_url
     ? `<a class="btn-secondary btn-open-local" href="${escapeAttr(f.local_file_url)}">${t('detail.openLocal')}</a><button type="button" class="btn-help-toggle" id="btn-open-local-help" title="${t('detail.openLocalHelp')}">?</button>`
+    : '';
+
+  // Skalierungs-Schaetzung ("Stufe 2", 29.09.2026, siehe Vault
+  // "Filament-Verbrauch-Integration-Konzept" + server/estimate.js) - nur
+  // sinnvoll anzeigbar, wenn ueberhaupt Geometrie (Volumen+Oberflaeche)
+  // vorliegt. Ob zusaetzlich schon eine Filamentmenge eingetragen ist, wird
+  // erst nach dem Laden per API geprueft (dort kommt der eigentliche Text).
+  const hasEstimateGeometry = !!(geo && !geo.error && geo.volumeMm3Approx != null && geo.surfaceAreaMm2Approx != null);
+  const estimateSection = hasEstimateGeometry
+    ? `<div class="estimate-box" id="estimate-box">
+        <h3>${t('estimate.title')}</h3>
+        <label class="estimate-scale-row">
+          ${t('estimate.scaleLabel')}
+          <input type="number" id="estimate-scale-input" min="1" max="1000" step="1" value="100" />
+        </label>
+        <div id="estimate-result" class="hint"></div>
+        <p class="hint">${t('estimate.hint')}</p>
+      </div>`
     : '';
 
   detailEl.innerHTML = `
@@ -343,6 +362,7 @@ function renderDetail(f) {
       <button type="submit">${t('form.save')}</button>
       <span class="hint" id="notes-saved-hint"></span>
     </form>
+    ${estimateSection}
   `;
 
   const filamentRowsEl = document.getElementById('filament-rows');
@@ -394,6 +414,10 @@ function renderDetail(f) {
     document.getElementById('notes-saved-hint').textContent = t('form.saved');
     const idx = allFiles.findIndex(x => x.id === f.id);
     if (idx >= 0) Object.assign(allFiles[idx], body);
+    // Die eingetragene Filamentmenge ist die Kalibrierungsgrundlage der
+    // Skalierungs-Schaetzung (siehe server/estimate.js) - nach dem Speichern
+    // neu berechnen, sonst zeigt die Schaetzung noch den alten Stand.
+    if (document.getElementById('estimate-box')) refreshEstimate();
   });
 
   const openLocalHelpBtn = document.getElementById('btn-open-local-help');
@@ -404,6 +428,35 @@ function renderDetail(f) {
       clearTimeout(openLocalHelpBtn._hintTimer);
       openLocalHelpBtn._hintTimer = setTimeout(() => { hintEl.hidden = true; }, 4000);
     });
+  }
+
+  // ---- Skalierungs-Schaetzung: Eingabefeld -> /api/files/:id/estimate ----
+  const estimateResultEl = document.getElementById('estimate-result');
+  const estimateScaleInput = document.getElementById('estimate-scale-input');
+  let estimateDebounceTimer = null;
+
+  async function refreshEstimate() {
+    if (!estimateResultEl) return;
+    const scale = Number(estimateScaleInput.value);
+    if (!Number.isFinite(scale) || scale <= 0) return;
+    try {
+      const result = await api(`/api/files/${f.id}/estimate?scale=${encodeURIComponent(scale)}`);
+      if (!result.ok) {
+        estimateResultEl.textContent = result.reason === 'no-filament' ? t('estimate.noFilament') : t('estimate.noGeometry');
+        return;
+      }
+      estimateResultEl.textContent = t('estimate.result', { pct: Math.round(result.scalePercent), n: result.totalGrams.toFixed(1) });
+    } catch (err) {
+      estimateResultEl.textContent = t('grid.loadError', { msg: err.message });
+    }
+  }
+
+  if (estimateScaleInput) {
+    estimateScaleInput.addEventListener('input', () => {
+      clearTimeout(estimateDebounceTimer);
+      estimateDebounceTimer = setTimeout(refreshEstimate, 300);
+    });
+    refreshEstimate();
   }
 
   if (!f.missing) loadIntoViewer('viewer-canvas-wrap', f.id, f.ext, f.size_bytes, f.mesh_version || 0);
@@ -446,6 +499,7 @@ document.getElementById('btn-libraries').addEventListener('click', async () => {
   await browseTo('');
   await refreshScanIntervalSelect();
   await refreshThumbnailsEnabledCheck();
+  await refreshEstimateSettingsInputs();
   dlg.showModal();
 });
 
@@ -510,6 +564,39 @@ thumbnailsEnabledCheckEl.addEventListener('change', async () => {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ thumbnails_enabled: thumbnailsEnabledCheckEl.checked }),
+  });
+});
+
+// ---- Skalierungs-Schaetzung: globale Annahmen (Wandstaerke/Infill), siehe
+// server/estimate.js + Vault "Filament-Verbrauch-Integration-Konzept"
+// (29.09.2026). Infill wird im UI als Prozent angezeigt/eingegeben, im
+// Backend aber als Anteil 0..1 gespeichert (estimate_infill_fraction).
+const estimateWallInputEl = document.getElementById('estimate-wall-input');
+const estimateInfillInputEl = document.getElementById('estimate-infill-input');
+
+async function refreshEstimateSettingsInputs() {
+  const data = await api('/api/settings');
+  estimateWallInputEl.value = data.estimate_wall_thickness_mm;
+  estimateInfillInputEl.value = Math.round(data.estimate_infill_fraction * 100);
+}
+
+estimateWallInputEl.addEventListener('change', async () => {
+  const mm = Number(estimateWallInputEl.value);
+  if (!Number.isFinite(mm) || mm <= 0) return;
+  await api('/api/settings', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ estimate_wall_thickness_mm: mm }),
+  });
+});
+
+estimateInfillInputEl.addEventListener('change', async () => {
+  const pct = Number(estimateInfillInputEl.value);
+  if (!Number.isFinite(pct) || pct < 0 || pct > 100) return;
+  await api('/api/settings', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ estimate_infill_fraction: pct / 100 }),
   });
 });
 
@@ -617,6 +704,7 @@ async function onLangChanged() {
   render();
   if (dlg.open) {
     await refreshScanIntervalSelect();
+    await refreshEstimateSettingsInputs();
   }
   if (currentDetailId) {
     await openDetail(currentDetailId, { skipHistory: true });

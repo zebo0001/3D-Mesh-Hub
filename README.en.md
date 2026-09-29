@@ -9,6 +9,20 @@ server-rendered thumbnails.
 
 Runs entirely locally in Docker — no uploads, no cloud, no registration.
 
+## Screenshots
+
+**Overview:** folder grid with thumbnails, format badges, and stat tiles.
+
+![Overview](docs/screenshots/overview.png)
+
+**File detail:** 3D preview, path, size, dimensions, plus automatically extracted mesh geometry (triangle count, volume, surface area).
+
+![File detail](docs/screenshots/file-detail.png)
+
+**Scaling estimate:** enter a target size and see the estimated filament usage for a scaled version of the file.
+
+![Scaling estimate](docs/screenshots/scaling-settings.png)
+
 ## Quick start
 
 1. Docker Desktop installed? Then:

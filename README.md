@@ -9,6 +9,20 @@ serverseitig gerenderten Thumbnails.
 
 Läuft komplett lokal in Docker — keine Uploads, keine Cloud, keine Registrierung.
 
+## Screenshots
+
+**Übersicht:** Ordner-Grid mit Thumbnails, Format-Badges und Stat-Kacheln.
+
+![Übersicht](docs/screenshots/overview.png)
+
+**Datei-Detail:** 3D-Vorschau, Pfad, Größe, Abmessungen sowie automatisch ausgelesene Mesh-Geometrie (Dreieckszahl, Volumen, Oberfläche).
+
+![Datei-Detail](docs/screenshots/file-detail.png)
+
+**Skalierungs-Schätzung:** Zielgröße eingeben und den geschätzten Filamentverbrauch für eine skalierte Version der Datei sehen.
+
+![Skalierungs-Schätzung](docs/screenshots/scaling-settings.png)
+
 ## Schnellstart
 
 1. Docker Desktop installiert? Dann:

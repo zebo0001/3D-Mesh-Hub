@@ -3,6 +3,16 @@
 Alle nennenswerten Aenderungen an 3D Mesh Hub werden hier dokumentiert.
 Das Projekt folgt [Semantic Versioning](https://semver.org/lang/de/) (MAJOR.MINOR.PATCH).
 
+## [1.6.0] - 2026-10-01
+
+### Hinzugefuegt
+- Lager-Integration: Spule aus dem Lagersystem (Spoolman-Erweiterung) im Datei-Detail waehlen statt Farbe/Gramm manuell einzutragen, Verbrauch per "Wird gedruckt"-Button direkt auf die Spule buchen.
+- Neue Einstellungen: Lager-Integration an/aus + Lager-Service-URL, inkl. "Verbindung testen"-Button.
+- "Bibliotheken"-Button in "Einstellungen" umbenannt (mehr als nur Bibliotheken konfigurierbar).
+
+### Geaendert
+- "Nur Slicer"-Berechnungsmethode vorerst deaktiviert (bekannter OrcaSlicer-CLI-Crash), Hinweis auf moegliches Feature-Update.
+
 ## [1.5.0] - 2026-09-29
 
 ### Hinzugefuegt

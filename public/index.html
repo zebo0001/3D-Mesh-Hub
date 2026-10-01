@@ -36,7 +36,7 @@ document.documentElement.setAttribute('data-theme', pref);
 <div class="page">
 <header class="hero">
 <div class="settings-toggle">
-<button id="btn-libraries" class="btn-settings" data-i18n="header.libraries">⚙ Bibliotheken</button>
+<button id="btn-libraries" class="btn-settings" data-i18n="header.libraries">⚙ Einstellungen</button>
 <button id="btn-info" class="btn-settings" data-i18n="header.info">ℹ Info</button>
 </div>
 <div class="lang-toggle" id="lang-toggle">
@@ -175,7 +175,7 @@ ohne ihn bleibt "Nur Schätzung" (Stufe 2) das einzig sinnvolle Ergebnis. -->
 <label data-i18n="lib.calcModeLabel">Berechnungsmethode für die Skalierungs-Schätzung:</label>
 <label class="inline-check"><input type="radio" name="calc-mode" value="estimate_only" /><span data-i18n="lib.calcModeEstimateOnly">Nur Schätzung (Stufe 2, geometrisch)</span></label>
 <label class="inline-check"><input type="radio" name="calc-mode" value="auto" /><span data-i18n="lib.calcModeAuto">Automatisch (Slicer, bei Fehler zurück auf Schätzung)</span></label>
-<label class="inline-check"><input type="radio" name="calc-mode" value="slicer_only" /><span data-i18n="lib.calcModeSlicerOnly">Nur Slicer (Stufe 3, kein Fallback)</span></label>
+<label class="inline-check disabled"><input type="radio" name="calc-mode" value="slicer_only" disabled /><span data-i18n="lib.calcModeSlicerOnly">Nur Slicer (Stufe 3, kein Fallback)</span> <span class="badge-soon" data-i18n="lib.calcModeSlicerOnlyDisabled">(voruebergehend deaktiviert - Feature-Update in Vorbereitung)</span></label>
 <p class="hint" data-i18n="lib.calcModeHint">
 Der echte Slicer (Stufe 3) braucht den optionalen Slicer-Service-Container
 (siehe docker-compose.slicer.yml) sowie ein aktives Profil unten. Ohne
@@ -189,6 +189,19 @@ beides bleibt "Automatisch" bei der Schätzung.
 <p class="hint" data-i18n="lib.slicerUrlHint">
 Nur nötig für "Automatisch"/"Nur Slicer". Interne Adresse des
 Slicer-Containers, siehe docker-compose.slicer.yml.
+</p>
+</div>
+
+<div class="settings-row">
+<label class="inline-check"><input type="checkbox" id="lager-enabled-checkbox" /><span data-i18n="lib.lagerEnabledLabel">Filament aus Lagersystem waehlen (Lager-Integration)</span></label>
+<label for="lager-url-input" data-i18n="lib.lagerUrlLabel">Lager-Service-URL:</label>
+<input type="text" id="lager-url-input" data-i18n-placeholder="lib.lagerUrlPlaceholder" placeholder="z.B. http://192.168.2.50:8081" />
+<button type="button" id="lager-test-btn" class="btn-secondary" data-i18n="lib.lagerTestBtn">Verbindung testen</button>
+<span id="lager-test-status" class="hint"></span>
+<p class="hint" data-i18n="lib.lagerHint">
+Wenn aktiv, kann im Datei-Detail eine Spule aus dem Lagersystem gewaehlt werden statt Farbe/Gramm manuell
+einzutragen; die gedruckte Menge wird dann direkt auf die Spule gebucht. Ohne Verbindung bleibt es bei der
+manuellen Eingabe.
 </p>
 </div>
 

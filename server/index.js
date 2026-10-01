@@ -186,6 +186,16 @@ const row = db.prepare("SELECT value FROM settings WHERE key = 'slicer_service_u
 return row ? row.value : '';
 }
 
+function getLagerEnabled() {
+const row = db.prepare("SELECT value FROM settings WHERE key = 'lager_enabled'").get();
+return row ? row.value === 'true' : false;
+}
+
+function getLagerServiceUrl() {
+const row = db.prepare("SELECT value FROM settings WHERE key = 'lager_service_url'").get();
+return row ? row.value : '';
+}
+
 app.get('/api/settings', (req, res) => {
 res.json({
 scan_interval_minutes: getScanIntervalMinutes(),
@@ -196,6 +206,8 @@ estimate_infill_fraction: getInfillFraction(),
 calc_mode: getCalcMode(),
 calc_modes: CALC_MODES,
 slicer_service_url: getSlicerServiceUrl(),
+lager_enabled: getLagerEnabled(),
+lager_service_url: getLagerServiceUrl(),
 });
 });
 
@@ -260,6 +272,22 @@ INSERT INTO settings (key, value) VALUES ('slicer_service_url', ?)
 ON CONFLICT(key) DO UPDATE SET value = excluded.value
 `).run(url);
 }
+if (req.body.lager_enabled !== undefined) {
+db.prepare(`
+INSERT INTO settings (key, value) VALUES ('lager_enabled', ?)
+ON CONFLICT(key) DO UPDATE SET value = excluded.value
+`).run(req.body.lager_enabled ? 'true' : 'false');
+}
+if (req.body.lager_service_url !== undefined) {
+const lagerUrl = String(req.body.lager_service_url || '').trim().slice(0, 300);
+if (lagerUrl !== '' && !/^https?:\/\//i.test(lagerUrl)) {
+return res.status(400).json({ error: 'lager_service_url muss leer sein oder mit http(s):// beginnen' });
+}
+db.prepare(`
+INSERT INTO settings (key, value) VALUES ('lager_service_url', ?)
+ON CONFLICT(key) DO UPDATE SET value = excluded.value
+`).run(lagerUrl);
+}
 res.json({
 ok: true,
 scan_interval_minutes: getScanIntervalMinutes(),
@@ -268,6 +296,8 @@ estimate_wall_thickness_mm: getWallThicknessMm(),
 estimate_infill_fraction: getInfillFraction(),
 calc_mode: getCalcMode(),
 slicer_service_url: getSlicerServiceUrl(),
+lager_enabled: getLagerEnabled(),
+lager_service_url: getLagerServiceUrl(),
 });
 });
 
@@ -296,6 +326,64 @@ return base;
 
 // Liste ohne die (potenziell recht grossen) Profil-JSONs - reicht fuer die
 // Auswahl-Ansicht in den Einstellungen.
+// ---- Lager-Integration: Spulen aus Lagersystem waehlen + Verbrauch buchen ----
+// Serverseitiger Proxy (nicht direkt aus dem Browser): vermeidet CORS-Probleme und
+// funktioniert auch, wenn der Lager-Service nur vom Mesh-Hub-Container aus erreichbar ist.
+app.get('/api/lager/spools', async (req, res) => {
+if (!getLagerEnabled()) {
+return res.status(400).json({ error: 'Lager-Integration ist deaktiviert' });
+}
+const base = getLagerServiceUrl();
+if (!base) {
+return res.status(400).json({ error: 'lager_service_url ist nicht gesetzt' });
+}
+try {
+const controller = new AbortController();
+const timeout = setTimeout(() => controller.abort(), 10000);
+const response = await fetch(base.replace(/\/+$/, '') + '/spools', { signal: controller.signal });
+clearTimeout(timeout);
+if (!response.ok) {
+return res.status(502).json({ error: 'Lager-Service antwortete mit ' + response.status });
+}
+const data = await response.json();
+res.json(data);
+} catch (err) {
+res.status(502).json({ error: 'Lager-Service nicht erreichbar: ' + (err.message || err) });
+}
+});
+
+app.post('/api/lager/spools/:id/use', async (req, res) => {
+if (!getLagerEnabled()) {
+return res.status(400).json({ error: 'Lager-Integration ist deaktiviert' });
+}
+const base = getLagerServiceUrl();
+if (!base) {
+return res.status(400).json({ error: 'lager_service_url ist nicht gesetzt' });
+}
+const grams = Number(req.body.grams);
+if (!Number.isFinite(grams) || grams <= 0) {
+return res.status(400).json({ error: 'grams muss > 0 sein' });
+}
+try {
+const controller = new AbortController();
+const timeout = setTimeout(() => controller.abort(), 10000);
+const response = await fetch(base.replace(/\/+$/, '') + '/spools/' + encodeURIComponent(req.params.id) + '/use', {
+method: 'POST',
+headers: { 'Content-Type': 'application/json' },
+body: JSON.stringify({ grams }),
+signal: controller.signal,
+});
+clearTimeout(timeout);
+const data = await response.json().catch(() => ({}));
+if (!response.ok) {
+return res.status(response.status).json(data.error ? data : { error: 'Buchung fehlgeschlagen' });
+}
+res.json(data);
+} catch (err) {
+res.status(502).json({ error: 'Lager-Service nicht erreichbar: ' + (err.message || err) });
+}
+});
+
 app.get('/api/slicer-profiles', (req, res) => {
 const rows = db.prepare('SELECT * FROM slicer_profiles ORDER BY created_at DESC').all();
 res.json(rows.map((r) => formatProfileRow(r)));

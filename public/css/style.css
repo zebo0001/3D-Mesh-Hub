@@ -261,6 +261,10 @@ dialog::backdrop { background: rgba(0,0,0,0.6); }
 .settings-row label { font-weight: 600; }
 .settings-row select { width: fit-content; padding: 0.3rem 0.5rem; border-radius: 6px; }
 .inline-check { display: inline-flex; align-items: center; gap: 0.3rem; font-size: 0.8rem; color: var(--muted); margin: 0 0.5rem; }
+.inline-check.disabled { opacity: 0.55; cursor: not-allowed; }
+.inline-check.disabled input { cursor: not-allowed; }
+.badge-soon { font-size: 0.72rem; color: var(--muted); font-style: italic; margin-left: 0.3rem; }
+
 dialog button {
   background: var(--panel-2); color: var(--text); border: 1px solid var(--border); border-radius: 6px;
   padding: 0.35rem 0.7rem; cursor: pointer; font-size: 0.8rem;

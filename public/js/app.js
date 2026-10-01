@@ -256,13 +256,14 @@ trackThumbnailProgress();
 // ---- Detail-Overlay ----
 async function openDetail(id, opts = {}) {
 const f = await api(`/api/files/${id}`);
+const settings = await api('/api/settings').catch(() => ({}));
 // Erst sichtbar machen, DANN rendern: der Viewer misst beim Aufbau die
 // Containergroesse (clientWidth/clientHeight). Waere das Overlay dabei
 // noch "hidden" (display:none), kaemen 0x0 raus und der Canvas wuerde
 // auf einen falschen Fallback-Wert gesetzt, der spaeter ueber den
 // sichtbaren Rahmen hinaus in den Text darunter haengt.
 overlayEl.hidden = false;
-renderDetail(f);
+await renderDetail(f, settings);
 currentDetailId = id;
 // skipHistory: true, wenn wir aus applyAppState() (popstate) heraus
 // wiederherstellen - sonst wuerde jedes Zurueckgehen einen neuen,
@@ -279,7 +280,7 @@ pushAppState();
 document.getElementById('btn-close-detail').addEventListener('click', closeDetail);
 overlayEl.addEventListener('click', (ev) => { if (ev.target === overlayEl) closeDetail(); });
 
-function renderDetail(f) {
+async function renderDetail(f, settings = {}) {
 const geo = f.geometry;
 const meta = f.embedded_meta;
 
@@ -306,8 +307,19 @@ metaRows += `<tr><td>${escapeHtml(k)}</td><td>${escapeHtml(v)}</td></tr>`;
 }
 }
 
+let lagerSpools = [];
+let lagerFetchError = null;
+if (settings && settings.lager_enabled) {
+try {
+const lagerData = await api('/api/lager/spools');
+lagerSpools = Array.isArray(lagerData.spools) ? lagerData.spools : [];
+} catch (err) {
+lagerFetchError = err.message || String(err);
+}
+}
+
 const filamentRows = (f.filament && f.filament.length ? f.filament : [{ color: '', grams: '' }])
-.map(filamentRowHtml).join('');
+.map((row) => filamentRowHtml(row, lagerSpools)).join('');
 
 const openLocalCell = f.local_file_url
 ? `<a class="btn-secondary btn-open-local" href="${escapeAttr(f.local_file_url)}">${t('detail.openLocal')}</a><button type="button" class="btn-help-toggle" id="btn-open-local-help" title="${t('detail.openLocalHelp')}">?</button>`
@@ -361,6 +373,8 @@ ${f.local_file_url ? `<div class="open-local-hint" id="open-local-hint" hidden>$
 <div class="filament-actions">
 <button type="button" id="btn-add-filament" class="btn-secondary">${t('form.addColor')}</button>
 <span id="filament-total" class="hint"></span>
+${lagerSpools.length ? `<button type="button" id="btn-lager-book" class="btn-secondary">${t('lager.bookBtn')}</button><span id="lager-book-status" class="hint"></span>` : ''}
+${lagerFetchError ? `<span class="hint">${t('lager.fetchError', { msg: lagerFetchError })}</span>` : ''}
 </div>
 </label>
 <button type="submit">${t('form.save')}</button>
@@ -380,7 +394,7 @@ filamentTotalEl.textContent = total > 0 ? t('form.filamentTotal', { n: total }) 
 
 function addFilamentRow(color = '', grams = '') {
 const div = document.createElement('div');
-div.innerHTML = filamentRowHtml({ color, grams });
+div.innerHTML = filamentRowHtml({ color, grams }, lagerSpools);
 const row = div.firstElementChild;
 filamentRowsEl.appendChild(row);
 wireFilamentRow(row);
@@ -390,15 +404,58 @@ function wireFilamentRow(row) {
 row.querySelector('.btn-remove-filament').addEventListener('click', () => {
 // Immer mindestens eine Zeile stehen lassen, sonst gibt es kein Eingabefeld mehr
 if (filamentRowsEl.children.length > 1) row.remove();
-else { row.querySelector('.filament-color').value = ''; row.querySelector('.filament-grams').value = ''; }
+else {
+row.querySelector('.filament-color').value = '';
+row.querySelector('.filament-grams').value = '';
+delete row.dataset.spoolId;
+const clearedSel = row.querySelector('.filament-spool');
+if (clearedSel) clearedSel.value = '';
+}
 updateFilamentTotal();
 });
 row.querySelector('.filament-grams').addEventListener('input', updateFilamentTotal);
+const spoolSelectEl = row.querySelector('.filament-spool');
+if (spoolSelectEl) {
+spoolSelectEl.addEventListener('change', () => {
+const opt = spoolSelectEl.selectedOptions[0];
+row.querySelector('.filament-color').value = opt && opt.value ? opt.textContent : '';
+if (spoolSelectEl.value) row.dataset.spoolId = spoolSelectEl.value;
+else delete row.dataset.spoolId;
+});
+}
 }
 
 [...filamentRowsEl.querySelectorAll('.filament-row')].forEach(wireFilamentRow);
 updateFilamentTotal();
 document.getElementById('btn-add-filament').addEventListener('click', () => addFilamentRow());
+
+const lagerBookBtn = document.getElementById('btn-lager-book');
+if (lagerBookBtn) {
+lagerBookBtn.addEventListener('click', async () => {
+const lagerBookStatusEl = document.getElementById('lager-book-status');
+const bookings = [...filamentRowsEl.querySelectorAll('.filament-row')]
+.map((row) => ({ spoolId: row.dataset.spoolId, grams: Number(row.querySelector('.filament-grams').value) }))
+.filter((b) => b.spoolId && Number.isFinite(b.grams) && b.grams > 0);
+if (bookings.length === 0) {
+lagerBookStatusEl.textContent = t('lager.bookNothing');
+return;
+}
+lagerBookStatusEl.textContent = t('lager.booking');
+try {
+for (const b of bookings) {
+await api(`/api/lager/spools/${b.spoolId}/use`, {
+method: 'POST',
+headers: { 'Content-Type': 'application/json' },
+body: JSON.stringify({ grams: b.grams }),
+});
+}
+lagerBookStatusEl.textContent = t('lager.bookDone', { n: bookings.length });
+document.getElementById('notes-form').requestSubmit();
+} catch (err) {
+lagerBookStatusEl.textContent = t('lager.bookError', { msg: err.message });
+}
+});
+}
 
 document.getElementById('notes-form').addEventListener('submit', async (ev) => {
 ev.preventDefault();
@@ -495,7 +552,20 @@ refreshEstimate();
 if (!f.missing) loadIntoViewer('viewer-canvas-wrap', f.id, f.ext, f.size_bytes, f.mesh_version || 0);
 }
 
-function filamentRowHtml(row) {
+function filamentRowHtml(row, lagerSpools) {
+if (lagerSpools && lagerSpools.length) {
+const options = [`<option value="">${t('filament.spoolPlaceholder')}</option>`]
+.concat(lagerSpools.map((s) => {
+const label = [s.material, s.name].filter(Boolean).join(' ') + (s.remaining_weight != null ? ` (${Math.round(s.remaining_weight)}g)` : '');
+return `<option value="${s.id}">${escapeHtml(label)}</option>`;
+}));
+return `<div class="filament-row">
+<select class="filament-spool">${options.join('')}</select>
+<input class="filament-color" type="hidden" value="${escapeAttr(row.color || '')}" />
+<input class="filament-grams" type="number" min="0" step="1" placeholder="${t('filament.gramsPlaceholder')}" value="${row.grams || row.grams === 0 ? escapeAttr(String(row.grams)) : ''}" />
+<button type="button" class="btn-remove-filament" title="${t('filament.removeTitle')}">✕</button>
+</div>`;
+}
 return `<div class="filament-row">
 <input class="filament-color" placeholder="${t('filament.colorPlaceholder')}" value="${escapeAttr(row.color || '')}" />
 <input class="filament-grams" type="number" min="0" step="1" placeholder="${t('filament.gramsPlaceholder')}" value="${row.grams || row.grams === 0 ? escapeAttr(String(row.grams)) : ''}" />
@@ -640,6 +710,10 @@ body: JSON.stringify({ estimate_infill_fraction: pct / 100 }),
 // sowie getCalcMode()/getSlicerServiceUrl() in server/index.js. ----
 const calcModeRadios = document.querySelectorAll('input[name="calc-mode"]');
 const slicerUrlInput = document.getElementById('slicer-url-input');
+const lagerEnabledCheckbox = document.getElementById('lager-enabled-checkbox');
+const lagerUrlInput = document.getElementById('lager-url-input');
+const lagerTestBtn = document.getElementById('lager-test-btn');
+const lagerTestStatus = document.getElementById('lager-test-status');
 
 async function refreshCalcModeSettings() {
 const data = await api('/api/settings');
@@ -647,6 +721,8 @@ for (const radio of calcModeRadios) {
 radio.checked = radio.value === data.calc_mode;
 }
 slicerUrlInput.value = data.slicer_service_url || '';
+lagerEnabledCheckbox.checked = !!data.lager_enabled;
+lagerUrlInput.value = data.lager_service_url || '';
 }
 
 for (const radio of calcModeRadios) {
@@ -675,6 +751,41 @@ body: JSON.stringify({ slicer_service_url: slicerUrlInput.value.trim() }),
 });
 } catch { /* Formatfehler (kein http(s)://) steht als 400 zurueck, hier bewusst ignoriert - der Nutzer sieht sein eingegebenes Feld ja weiterhin und kann korrigieren */ }
 }, 500);
+});
+
+lagerEnabledCheckbox.addEventListener('change', async () => {
+await api('/api/settings', {
+method: 'PUT',
+headers: { 'Content-Type': 'application/json' },
+body: JSON.stringify({ lager_enabled: lagerEnabledCheckbox.checked }),
+});
+lagerTestStatus.textContent = '';
+});
+
+let lagerUrlSaveTimer = null;
+lagerUrlInput.addEventListener('input', () => {
+clearTimeout(lagerUrlSaveTimer);
+lagerTestStatus.textContent = '';
+lagerUrlSaveTimer = setTimeout(async () => {
+try {
+await api('/api/settings', {
+method: 'PUT',
+headers: { 'Content-Type': 'application/json' },
+body: JSON.stringify({ lager_service_url: lagerUrlInput.value.trim() }),
+});
+} catch { /* Formatfehler wird im Feld belassen, Nutzer kann korrigieren */ }
+}, 500);
+});
+
+lagerTestBtn.addEventListener('click', async () => {
+lagerTestStatus.textContent = getLang() === 'en' ? 'Testing...' : 'Teste...';
+try {
+const data = await api('/api/lager/spools');
+const count = Array.isArray(data.spools) ? data.spools.length : 0;
+lagerTestStatus.textContent = (getLang() === 'en' ? 'OK - spools found: ' : 'OK - Spulen gefunden: ') + count;
+} catch (err) {
+lagerTestStatus.textContent = (getLang() === 'en' ? 'Failed: ' : 'Fehlgeschlagen: ') + (err.message || err);
+}
 });
 
 // ---- Stufe 3: Slicer-Profile - Liste, Aktivieren, Loeschen, Hochladen (drei

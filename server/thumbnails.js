@@ -39,7 +39,7 @@ const RENDERABLE_EXT = new Set(['stl', '3mf', 'obj']);
 // veraltet und wird automatisch neu erzeugt, auch wenn die Quelldatei selbst
 // unveraendert ist. So muss nach einem Render-Logik-Fix niemand manuell den
 // Cache leeren.
-const RENDER_VERSION = 2; // 1 = initial, 2 = Z-up->Y-up-Korrektur fuer STL/3MF (26.09.2026)
+const RENDER_VERSION = 3; // 1 = initial, 2 = Z-up->Y-up-Korrektur fuer STL/3MF (26.09.2026), 3 = 3MF-Loader: Objekt-IDs je Modell-Datei + p:path (mehrere Objekte lagen uebereinander, 08.10.2026)
 const MAX_CONCURRENT_RENDERS = 2;
 const FAILURE_COOLDOWN_MS = 10 * 60 * 1000; // 10 Minuten, bevor eine gescheiterte Datei erneut versucht wird
 const RENDER_TIMEOUT_MS = 45000; // Software-Rendering (SwiftShader) ist langsam, grosszuegig bemessen

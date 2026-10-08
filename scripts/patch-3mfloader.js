@@ -1,17 +1,33 @@
 #!/usr/bin/env node
-// Patcht eine bekannte Einschraenkung des three.js-Standard-3MFLoaders: bei
-// mehrteiligen 3MF-Dateien (typisch fuer Bambu Studio/OrcaSlicer, wenn
-// Objekte in separaten Modell-Teilen liegen und nur per Komponente
-// referenziert werden) wirft buildObject() intern
-// "Cannot read properties of undefined (reading 'mesh')", weil referenzierte
-// Objekt-IDs nur im jeweils AKTUELLEN Modell-Teil gesucht werden statt in
-// allen. Dieser Patch erweitert die Suche auf alle Modell-Teile.
+// Patcht zwei bekannte Einschraenkungen des three.js-Standard-3MFLoaders (r169)
+// bei mehrteiligen 3MF-Dateien (typisch Bambu Studio / OrcaSlicer):
 //
-// WICHTIG: Dieser Patch bricht den Docker-Build bewusst NICHT ab, wenn eine
-// erwartete Codestelle nicht gefunden wird (z.B. nach einem three.js-Update,
-// das diese interne Struktur aendert) - er ueberspringt sich dann selbst und
-// gibt eine Warnung aus. Lieber ein weiterhin bestehender Thumbnail-Fehler
-// fuer mehrteilige 3MF-Dateien als ein kaputter Gesamt-Build.
+// Struktur solcher Dateien: 3D/3dmodel.model (Root) enthaelt pro Objekt nur ein
+// <object> mit <components>, die per p:path auf separate Dateien verweisen
+// (z.B. /3D/Objects/object_1.model, object_2.model, ...). In JEDER dieser
+// Teildateien heisst das Mesh-Objekt typischerweise id="1".
+//
+// Der Standard-Loader macht daraus zwei Fehler:
+//  1. Er legt alle Objekte in EINER flachen Map nach nackter Objekt-ID ab,
+//     ueber alle Modell-Dateien hinweg. Die ids kollidieren (mehrfach "1"),
+//     das zuletzt gebaute Objekt ueberschreibt die anderen.
+//  2. Er wertet das p:path der <component> nicht aus und sucht die referenzierte
+//     id nur im AKTUELLEN Modell-Teil (-> frueher "Cannot read properties of
+//     undefined (reading 'mesh')").
+//
+// Folge von (1)+(2) seit dem ersten Teil-Fix: mehrere Objekte einer Datei
+// landen als Kopien desselben Meshs an denselben Stellen, also "uebereinander"
+// bzw. es fehlen Objekte. Mit nur einem Objekt pro Datei fiel das nie auf.
+//
+// Dieser Patch (ersetzt den frueheren, reinen Such-Patch):
+//  - liest p:path pro <component> mit,
+//  - legt gebaute Objekte unter "<modell-datei>|<id>" ab (kein Kollisionsrisiko),
+//  - loest Komponenten ueber p:path in die richtige Modell-Datei auf,
+//  - nutzt fuer die <build>-Items den Root-Modell-Schluessel.
+//
+// WICHTIG: Der Patch bricht den Docker-Build bewusst NICHT ab, wenn eine
+// erwartete Codestelle nicht gefunden wird (z.B. nach einem three.js-Update):
+// er ueberspringt sich dann selbst und gibt eine Warnung aus.
 const fs = require('fs');
 
 const target = process.argv[2];
@@ -31,96 +47,247 @@ try {
 const original = src;
 const failures = [];
 
-function tryReplace(pattern, replacement, label) {
-  const matches = src.match(pattern);
-  const count = matches ? matches.length : 0;
-  if (count !== 1) {
-    failures.push(`${label}: erwartete 1 Fundstelle, gefunden ${count}`);
-    return;
-  }
-  src = src.replace(pattern, replacement);
+function countOf(haystack, needle) {
+  let n = 0, i = 0;
+  while ((i = haystack.indexOf(needle, i)) !== -1) { n++; i += needle.length; }
+  return n;
 }
 
-tryReplace(
-  /function buildObjects\(\s*data3mf\s*\)\s*\{/,
-  `function buildObjects( data3mf ) {\n\n\tconst __allModelsData = Object.keys( data3mf.model ).map( function ( k ) { return data3mf.model[ k ]; } );`,
-  'buildObjects-Kopf'
-);
+// 1) <component> soll p:path mitlesen
+{
+  const re = /componentData\[\s*'objectId'\s*\]\s*=\s*componentNode\.getAttribute\(\s*'objectid'\s*\);[^\n]*/;
+  const found = src.match(new RegExp(re.source, 'g'));
+  if (!found || found.length !== 1) {
+    failures.push(`parseComponentNode: erwartete 1 Fundstelle, gefunden ${found ? found.length : 0}`);
+  } else {
+    src = src.replace(re, (m) => m + `\n\n\t\t\tcomponentData[ 'path' ] = componentNode.getAttribute( 'p:path' ); // Patch: Verweis auf Objekt-Datei`);
+  }
+}
 
-tryReplace(
-  /buildObject\(\s*objectId,\s*objects,\s*modelData,\s*textureData\s*\);/,
-  'buildObject( objectId, objects, modelData, textureData, __allModelsData );',
-  'buildObjects-Aufruf'
-);
+// 2) buildComposite .. build() komplett ersetzen (Grenzen: Start von buildComposite,
+//    Ende direkt vor dem finalen loadDocument-Aufruf)
+const START = 'function buildComposite(';
+const END = 'const data3mf = loadDocument( data );';
+const startIdx = src.indexOf(START);
+const endIdx = src.indexOf(END);
+if (countOf(src, START) !== 1 || countOf(src, END) !== 1 || startIdx < 0 || endIdx < startIdx) {
+  failures.push('Funktionsblock buildComposite..build: Grenzen nicht eindeutig gefunden');
+} else {
+  const replacement = `// ---- Patch (scripts/patch-3mfloader.js): modell-datei-bewusste Objektaufloesung ----
+\t\tlet __allModels = {};
 
-tryReplace(
-  /function buildObject\(\s*objectId,\s*objects,\s*modelData,\s*textureData\s*\)\s*\{\s*\n\s*const objectData = modelData\[\s*'resources'\s*\]\[\s*'object'\s*\]\[\s*objectId\s*\];/,
-  `function buildObject( objectId, objects, modelData, textureData, allModelsData ) {
+\t\tfunction __objKey( modelData, id ) {
 
-\tlet objectData = modelData[ 'resources' ][ 'object' ][ objectId ];
-
-\tif ( objectData === undefined && allModelsData ) {
-
-\t\tfor ( let __k = 0; __k < allModelsData.length; __k ++ ) {
-
-\t\t\tconst __candidate = allModelsData[ __k ][ 'resources' ] && allModelsData[ __k ][ 'resources' ][ 'object' ][ objectId ];
-
-\t\t\tif ( __candidate !== undefined ) { objectData = __candidate; modelData = allModelsData[ __k ]; break; }
+\t\t\treturn modelData.__key + '|' + id;
 
 \t\t}
 
-\t}
+\t\tfunction buildComposite( compositeData, objects, modelData, textureData ) {
 
-\tif ( objectData === undefined ) return;`,
-  'buildObject-Kopf'
-);
+\t\t\tconst composite = new Group();
 
-tryReplace(
-  /getBuild\(\s*meshData,\s*objects,\s*modelData,\s*textureData,\s*objectData,\s*buildGroup\s*\);/,
-  'getBuild( meshData, objects, modelData, textureData, objectData, buildGroup, allModelsData );',
-  'buildObject-getBuild-mesh'
-);
+\t\t\tif ( ! compositeData ) return composite;
 
-tryReplace(
-  /getBuild\(\s*compositeData,\s*objects,\s*modelData,\s*textureData,\s*objectData,\s*buildComposite\s*\);/,
-  'getBuild( compositeData, objects, modelData, textureData, objectData, buildComposite, allModelsData );',
-  'buildObject-getBuild-composite'
-);
+\t\t\tfor ( let j = 0; j < compositeData.length; j ++ ) {
 
-tryReplace(
-  /function getBuild\(\s*data,\s*objects,\s*modelData,\s*textureData,\s*objectData,\s*builder\s*\)\s*\{/,
-  'function getBuild( data, objects, modelData, textureData, objectData, builder, allModelsData ) {',
-  'getBuild-Kopf'
-);
+\t\t\t\tconst component = compositeData[ j ];
 
-tryReplace(
-  /data\.build = builder\(\s*data,\s*objects,\s*modelData,\s*textureData,\s*objectData\s*\);/,
-  'data.build = builder( data, objects, modelData, textureData, objectData, allModelsData );',
-  'getBuild-Aufruf'
-);
+\t\t\t\t// p:path zeigt auf die Datei, in der die referenzierte id liegt (fuehrender "/" entfernen)
+\t\t\t\tlet targetModel = modelData;
 
-tryReplace(
-  /function buildComposite\(\s*compositeData,\s*objects,\s*modelData,\s*textureData\s*\)\s*\{/,
-  'function buildComposite( compositeData, objects, modelData, textureData, objectData, allModelsData ) {',
-  'buildComposite-Kopf'
-);
+\t\t\t\tif ( component.path ) {
 
-tryReplace(
-  /buildObject\(\s*component\.objectId,\s*objects,\s*modelData,\s*textureData\s*\);/,
-  'buildObject( component.objectId, objects, modelData, textureData, allModelsData );',
-  'buildComposite-rekursiv'
-);
+\t\t\t\t\tconst p = component.path.replace( /^\\//, '' );
+\t\t\t\t\tif ( __allModels[ p ] ) targetModel = __allModels[ p ];
 
-tryReplace(
-  /const object3D = build\.clone\(\);/,
-  'if ( build === undefined ) continue;\n\n\t\tconst object3D = build.clone();',
-  'buildComposite-undefined-guard'
-);
+\t\t\t\t}
+
+\t\t\t\tconst key = __objKey( targetModel, component.objectId );
+\t\t\t\tlet build = objects[ key ];
+
+\t\t\t\tif ( build === undefined ) {
+
+\t\t\t\t\tbuildObject( component.objectId, objects, targetModel, textureData );
+\t\t\t\t\tbuild = objects[ key ];
+
+\t\t\t\t}
+
+\t\t\t\tif ( build === undefined ) continue;
+
+\t\t\t\tconst object3D = build.clone();
+
+\t\t\t\t// apply component transform
+
+\t\t\t\tconst transform = component.transform;
+
+\t\t\t\tif ( transform ) {
+
+\t\t\t\t\tobject3D.applyMatrix4( transform );
+
+\t\t\t\t}
+
+\t\t\t\tcomposite.add( object3D );
+
+\t\t\t}
+
+\t\t\treturn composite;
+
+\t\t}
+
+\t\tfunction buildObject( objectId, objects, modelData, textureData ) {
+
+\t\t\tconst objectData = modelData[ 'resources' ][ 'object' ][ objectId ];
+
+\t\t\tif ( objectData === undefined ) return;
+
+\t\t\tconst key = __objKey( modelData, objectId );
+
+\t\t\tif ( objectData[ 'mesh' ] ) {
+
+\t\t\t\tconst meshData = objectData[ 'mesh' ];
+
+\t\t\t\tconst extensions = modelData[ 'extensions' ];
+\t\t\t\tconst modelXml = modelData[ 'xml' ];
+
+\t\t\t\tapplyExtensions( extensions, meshData, modelXml );
+
+\t\t\t\tobjects[ key ] = getBuild( meshData, objects, modelData, textureData, objectData, buildGroup );
+
+\t\t\t} else {
+
+\t\t\t\tconst compositeData = objectData[ 'components' ];
+
+\t\t\t\tobjects[ key ] = getBuild( compositeData, objects, modelData, textureData, objectData, buildComposite );
+
+\t\t\t}
+
+\t\t\tif ( objectData.name && objects[ key ] ) {
+
+\t\t\t\tobjects[ key ].name = objectData.name;
+
+\t\t\t}
+
+\t\t}
+
+\t\tfunction buildObjects( data3mf ) {
+
+\t\t\tconst modelsData = data3mf.model;
+\t\t\tconst modelRels = data3mf.modelRels;
+\t\t\tconst objects = {};
+\t\t\tconst modelsKeys = Object.keys( modelsData );
+\t\t\tconst textureData = {};
+
+\t\t\t// evaluate model relationships to textures
+
+\t\t\tif ( modelRels ) {
+
+\t\t\t\tfor ( let i = 0, l = modelRels.length; i < l; i ++ ) {
+
+\t\t\t\t\tconst modelRel = modelRels[ i ];
+\t\t\t\t\tconst textureKey = modelRel.target.substring( 1 );
+
+\t\t\t\t\tif ( data3mf.texture[ textureKey ] ) {
+
+\t\t\t\t\t\ttextureData[ modelRel.target ] = data3mf.texture[ textureKey ];
+
+\t\t\t\t\t}
+
+\t\t\t\t}
+
+\t\t\t}
+
+\t\t\t// Modell-Dateien per Pfad auffindbar machen (fuer p:path-Aufloesung)
+
+\t\t\t__allModels = modelsData;
+
+\t\t\tfor ( let i = 0; i < modelsKeys.length; i ++ ) {
+
+\t\t\t\tmodelsData[ modelsKeys[ i ] ].__key = modelsKeys[ i ];
+
+\t\t\t}
+
+\t\t\t// start build
+
+\t\t\tfor ( let i = 0; i < modelsKeys.length; i ++ ) {
+
+\t\t\t\tconst modelData = modelsData[ modelsKeys[ i ] ];
+
+\t\t\t\tif ( ! modelData[ 'resources' ] ) continue;
+
+\t\t\t\tconst objectIds = Object.keys( modelData[ 'resources' ][ 'object' ] );
+
+\t\t\t\tfor ( let j = 0; j < objectIds.length; j ++ ) {
+
+\t\t\t\t\tconst key = __objKey( modelData, objectIds[ j ] );
+
+\t\t\t\t\tif ( objects[ key ] !== undefined ) continue; // schon als Komponente gebaut
+
+\t\t\t\t\tbuildObject( objectIds[ j ], objects, modelData, textureData );
+
+\t\t\t\t}
+
+\t\t\t}
+
+\t\t\treturn objects;
+
+\t\t}
+
+\t\tfunction fetch3DModelPart( rels ) {
+
+\t\t\tfor ( let i = 0; i < rels.length; i ++ ) {
+
+\t\t\t\tconst rel = rels[ i ];
+\t\t\t\tconst extension = rel.target.split( '.' ).pop();
+
+\t\t\t\tif ( extension.toLowerCase() === 'model' ) return rel;
+
+\t\t\t}
+
+\t\t}
+
+\t\tfunction build( objects, data3mf ) {
+
+\t\t\tconst group = new Group();
+
+\t\t\tconst relationship = fetch3DModelPart( data3mf[ 'rels' ] );
+\t\t\tconst rootKey = relationship[ 'target' ].substring( 1 );
+\t\t\tconst buildData = data3mf.model[ rootKey ][ 'build' ];
+
+\t\t\tfor ( let i = 0; i < buildData.length; i ++ ) {
+
+\t\t\t\tconst buildItem = buildData[ i ];
+\t\t\t\tconst built = objects[ rootKey + '|' + buildItem[ 'objectId' ] ];
+
+\t\t\t\tif ( built === undefined ) continue;
+
+\t\t\t\tconst object3D = built.clone();
+
+\t\t\t\t// apply transform
+
+\t\t\t\tconst transform = buildItem[ 'transform' ];
+
+\t\t\t\tif ( transform ) {
+
+\t\t\t\t\tobject3D.applyMatrix4( transform );
+
+\t\t\t\t}
+
+\t\t\t\tgroup.add( object3D );
+
+\t\t\t}
+
+\t\t\treturn group;
+
+\t\t}
+
+\t\t`;
+  src = src.slice(0, startIdx) + replacement + src.slice(endIdx);
+}
 
 if (failures.length > 0) {
-  console.warn('3MFLoader-Patch teilweise/ganz uebersprungen (three.js-Version hat sich vermutlich geaendert):');
+  console.warn('3MFLoader-Patch uebersprungen (three.js-Version hat sich vermutlich geaendert):');
   for (const f of failures) console.warn('  - ' + f);
-  console.warn('Mehrteilige 3MF-Dateien (z.B. Bambu Studio/OrcaSlicer mit mehreren Objekten) koennten weiterhin keine Thumbnails bekommen. Kein Build-Abbruch.');
+  console.warn('Mehrteilige 3MF-Dateien (z.B. Bambu Studio/OrcaSlicer mit mehreren Objekten) koennten falsch/ohne Thumbnail dargestellt werden. Kein Build-Abbruch.');
   process.exit(0);
 }
 
@@ -130,4 +297,4 @@ if (src === original) {
 }
 
 fs.writeFileSync(target, src, 'utf8');
-console.log('3MFLoader erfolgreich gepatcht (Unterstuetzung fuer mehrteilige 3MF-Dateien ergaenzt).');
+console.log('3MFLoader erfolgreich gepatcht (modell-datei-bewusste Objektaufloesung fuer mehrteilige 3MF-Dateien).');

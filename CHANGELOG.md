@@ -3,6 +3,11 @@
 Alle nennenswerten Aenderungen an 3D Mesh Hub werden hier dokumentiert.
 Das Projekt folgt [Semantic Versioning](https://semver.org/lang/de/) (MAJOR.MINOR.PATCH).
 
+## [1.6.1] - 2026-10-09
+
+### Behoben
+- 3D-Viewer: Bei mehrteiligen 3MF-Dateien (Bambu Studio/OrcaSlicer mit mehreren Objekten) lagen die Objekte uebereinander bzw. fehlten. Ursache: der three.js-3MFLoader legte Objekte nur nach nackter ID ab (in jeder Objekt-Datei heisst das Mesh id=1) und ignorierte p:path. scripts/patch-3mfloader.js loest Objekte jetzt je Modell-Datei auf. Bestehende Thumbnails/GLB-Caches werden durch RENDER_VERSION = 3 automatisch neu erzeugt.
+
 ## [1.6.0] - 2026-10-01
 
 ### Hinzugefuegt

@@ -19,7 +19,7 @@ if (!HOST_DATA_ROOT) return null;
 // Nur fuer echte absolute Host-Pfade sinnvoll (z.B. "D:/Druckdaten" oder
 // "/mnt/druckdaten") - ein relativer Beispiel-Pfad wie "./beispiel-daten"
 // ergibt keinen gueltigen Link.
-const isWindowsAbs = /^[a-zA-Z]:[\/]/.test(HOST_DATA_ROOT);
+const isWindowsAbs = /^[a-zA-Z]:[\\\/]/.test(HOST_DATA_ROOT);
 const isUnixAbs = HOST_DATA_ROOT.startsWith('/');
 if (!isWindowsAbs && !isUnixAbs) return null;
 

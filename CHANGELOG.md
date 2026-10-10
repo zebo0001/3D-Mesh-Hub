@@ -3,6 +3,11 @@
 Alle nennenswerten Aenderungen an 3D Mesh Hub werden hier dokumentiert.
 Das Projekt folgt [Semantic Versioning](https://semver.org/lang/de/) (MAJOR.MINOR.PATCH).
 
+## [1.6.2] - 2026-10-10
+
+### Behoben
+- "Am PC oeffnen": Der Button fehlte, wenn DATA_ROOT in der .env mit Backslashes angegeben war (z.B. E:\\Nextcloud\\3d). Die Windows-Pfad-Erkennung akzeptiert jetzt Backslash und Schraegstrich.
+
 ## [1.6.1] - 2026-10-09
 
 ### Behoben

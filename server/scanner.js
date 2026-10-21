@@ -68,7 +68,7 @@ function toGeometryJson(result) {
   };
 }
 
-function scanLibrary(libRelPath, recursive = true) {
+function scanLibrary(libRelPath, recursive = true, opts = {}) {
   const libAbs = safeResolve(libRelPath);
   const found = [];
   walk(libAbs, libRelPath, found, recursive);
@@ -86,8 +86,7 @@ function scanLibrary(libRelPath, recursive = true) {
   `);
   const ensureMeta = db.prepare(`INSERT OR IGNORE INTO file_meta (file_id) VALUES (?)`);
 
-  let processed = 0;
-  for (const f of found) {
+  const processFile = (f) => {
     const stat = fs.statSync(f.abs);
     const id = relId(f.rel);
     const mtimeIso = stat.mtime.toISOString();
@@ -97,9 +96,26 @@ function scanLibrary(libRelPath, recursive = true) {
     // (siehe thumbnails.js/render.js) nicht mehr gueltig - loeschen, damit beim
     // naechsten Aufruf frisch gerendert wird (User-Entscheidung 25.09.2026:
     // GLB-Cache dauerhaft behalten, aber gezielt bei Aenderung neu erzeugen).
-    const prevRow = db.prepare('SELECT mtime FROM files WHERE id = ?').get(id);
+    const prevRow = db.prepare('SELECT mtime, size_bytes, geometry_json, embedded_meta_json, missing FROM files WHERE id = ?').get(id);
     if (prevRow && prevRow.mtime !== mtimeIso) {
       thumbnails.invalidateCache(id);
+    }
+
+    // Unveraenderte Datei (gleiche mtime + Groesse, nicht als fehlend markiert)
+    // und bereits mit aktuellem Parser-Stand geparst: nicht erneut einlesen.
+    // Das war der Hauptgrund fuer minutenlange Blockade nach Containerstart
+    // (jede Datei, auch 2-Mio-Dreiecke-3MF, wurde bei jedem Scan neu geparst).
+    if (prevRow && prevRow.mtime === mtimeIso && prevRow.size_bytes === stat.size && !prevRow.missing) {
+      const parsedBefore = prevRow.geometry_json != null || prevRow.embedded_meta_json != null;
+      const upToDate = f.ext === '.3mf'
+        ? ((prevRow.embedded_meta_json || '').includes('"filamentInfo"') && (prevRow.embedded_meta_json || '').includes('"unit"')) || (prevRow.embedded_meta_json || '').includes('"error"')
+        : parsedBefore || !['.stl', '.obj'].includes(f.ext);
+      if (upToDate) {
+        db.prepare("UPDATE files SET last_scanned_at = datetime('now') WHERE id = ?").run(id);
+        ensureMeta.run(id);
+        processed++;
+        return;
+      }
     }
 
     let geometry = null;
@@ -113,7 +129,7 @@ function scanLibrary(libRelPath, recursive = true) {
       const buf = fs.readFileSync(f.abs);
       const result = parse3MF(buf);
       embeddedMeta = result.ok
-        ? { coreMeta: result.coreMeta, vertexCountApprox: result.vertexCountApprox, slicerFilesFound: result.slicerFilesFound }
+        ? { coreMeta: result.coreMeta, unit: result.unit || null, vertexCountApprox: result.vertexCountApprox, slicerFilesFound: result.slicerFilesFound, filamentInfo: result.filamentInfo }
         : { error: result.error };
       // Seit 29.09.2026: parse3MF() liefert zusaetzlich echte Mesh-Geometrie
       // (vorher gar keine, siehe Commit-Historie/Vault). result.geometry ist
@@ -151,18 +167,21 @@ function scanLibrary(libRelPath, recursive = true) {
     }
     ensureMeta.run(id);
     processed++;
-  }
+  };
 
+  let processed = 0;
+  const finish = () => {
   // Dateien markieren, die nicht mehr gefunden wurden (geloescht/verschoben),
   // statt sie stumm zu loeschen - so gehen eigene Notizen/Tags nicht verloren.
   // Bei nicht-rekursivem Scan nur die direkte Ebene beruecksichtigen, sonst
   // wuerden Dateien in Unterordnern faelschlich als "fehlend" markiert.
   const foundIds = new Set(found.map(f => relId(f.rel)));
   const candidates = db.prepare(`SELECT id, rel_path FROM files WHERE rel_path LIKE ?`)
-    .all(libRelPath + path.sep + '%');
+    .all(libRelPath ? libRelPath + path.sep + '%' : '%');
   const markMissing = db.prepare(`UPDATE files SET missing=1 WHERE id=?`);
   for (const row of candidates) {
-    const inScope = recursive || path.dirname(row.rel_path) === libRelPath;
+    const dirOfRow = path.dirname(row.rel_path) === '.' ? '' : path.dirname(row.rel_path);
+    const inScope = recursive || dirOfRow === libRelPath;
     if (inScope && !foundIds.has(row.id)) {
       markMissing.run(row.id);
       // Datei ist weg (geloescht/verschoben) - gecachte Thumbnail/GLB-Dateien
@@ -172,6 +191,21 @@ function scanLibrary(libRelPath, recursive = true) {
   }
 
   return { scanned: processed, total_found: found.length, recursive };
+  };
+
+  if (!opts.async) {
+    for (const f of found) processFile(f);
+    return finish();
+  }
+  // Asynchron: nach jeder Datei den Event-Loop freigeben, damit der Server
+  // waehrend des Scans weiter Anfragen beantwortet.
+  return (async () => {
+    for (const f of found) {
+      processFile(f);
+      await new Promise((r) => setImmediate(r));
+    }
+    return finish();
+  })();
 }
 
 function scanAllLibraries() {
@@ -183,4 +217,13 @@ function scanAllLibraries() {
   return results;
 }
 
-module.exports = { scanAllLibraries, scanLibrary, relId, safeResolve, DATA_ROOT };
+async function scanAllLibrariesAsync() {
+  const libs = db.prepare('SELECT rel_path, recursive FROM libraries').all();
+  const results = {};
+  for (const lib of libs) {
+    results[lib.rel_path] = await scanLibrary(lib.rel_path, !!lib.recursive, { async: true });
+  }
+  return results;
+}
+
+module.exports = { scanAllLibraries, scanAllLibrariesAsync, scanLibrary, relId, safeResolve, DATA_ROOT };

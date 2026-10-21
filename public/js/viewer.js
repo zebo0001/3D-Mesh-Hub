@@ -4,7 +4,7 @@ import { STLLoader } from 'three/addons/loaders/STLLoader.js';
 import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
 import { ThreeMFLoader } from 'three/addons/loaders/3MFLoader.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { t } from './i18n.js';
+import { t, localeTag } from './i18n.js';
 
 // HINWEIS (24.09.2026): Es gab hier kurzzeitig einen Versuch, das Parsen in
 // einen Web Worker auszulagern (parse-worker.js, mittlerweile ungenutzt).
@@ -36,6 +36,22 @@ import { t } from './i18n.js';
 // Container-Div verschwindet also bei jedem Dateiwechsel aus dem DOM.
 let renderer, scene, camera, controls, currentMesh;
 
+// ---- Messung & Schnittebene (Zustand) ----
+// Einheit: Szene-Einheiten * unitScaleMm = mm. Fuer STL/OBJ sind Szene-Einheiten
+// die Modelleinheiten (Faktor kommt aus der Einheiten-Pruefung, siehe app.js);
+// bei 3MF liefert der GLB-Cache mm (Einheit laut Datei wird beim Rendern
+// beruecksichtigt - bei den vorhandenen Dateien durchweg mm, fuer andere
+// Einheiten ungeprueft).
+let unitScaleMm = 1;
+let measureOn = false;
+let measurePts = [];
+let measureObjs = [];
+let measureLabelEl = null;
+let modelBox = null;
+const sectionPlane = new THREE.Plane(new THREE.Vector3(1, 0, 0), 0);
+let sectionOn = false;
+const raycaster = new THREE.Raycaster();
+
 function ensureScene() {
   if (renderer) return;
   scene = new THREE.Scene();
@@ -45,6 +61,7 @@ function ensureScene() {
   camera.position.set(80, 80, 80);
 
   renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.localClippingEnabled = true; // Schnittebene (pro Material)
 
   scene.add(new THREE.HemisphereLight(0xffffff, 0x33352f, 1.1));
   const dir = new THREE.DirectionalLight(0xffffff, 0.8);
@@ -57,6 +74,15 @@ function ensureScene() {
   controls = new OrbitControls(camera, renderer.domElement);
   controls.enableDamping = true;
   controls.enablePan = true; // war schon three.js-Standard, hier nur explizit gemacht (User-Frage 25.09.2026)
+
+  // Klick (kein Ziehen) im Mess-Modus -> Punkt setzen. Ziehen = Orbit/Pan wie gewohnt.
+  let downX = 0, downY = 0;
+  renderer.domElement.addEventListener('pointerdown', (ev) => { downX = ev.clientX; downY = ev.clientY; });
+  renderer.domElement.addEventListener('pointerup', (ev) => {
+    if (!measureOn) return;
+    if (Math.hypot(ev.clientX - downX, ev.clientY - downY) > 5) return;
+    pickPoint(ev);
+  });
 
   animate();
 }
@@ -110,6 +136,9 @@ function frameObject(object3d) {
 }
 
 function clearCurrent() {
+  clearMeasure();
+  sectionOn = false;
+  modelBox = null;
   if (currentMesh) {
     scene.remove(currentMesh);
     currentMesh = null;
@@ -131,6 +160,10 @@ export function loadIntoViewer(containerId, fileId, ext, sizeBytes, meshVersion 
     : t('viewer.loading');
   container.appendChild(loadingEl);
   const clearLoading = () => loadingEl.remove();
+  measureLabelEl = document.createElement('div');
+  measureLabelEl.className = 'measure-label';
+  measureLabelEl.hidden = true;
+  container.appendChild(measureLabelEl);
 
   const url = `/api/files/${fileId}/raw`;
   const material = new THREE.MeshStandardMaterial({ color: 0xff7a1a, metalness: 0.1, roughness: 0.6 });
@@ -143,6 +176,7 @@ export function loadIntoViewer(containerId, fileId, ext, sizeBytes, meshVersion 
       currentMesh.rotation.x = -Math.PI / 2; // Z-up (Druckdatei) -> Y-up (three.js), siehe render.js
       scene.add(currentMesh);
       frameObject(currentMesh);
+      onModelReady();
     }, undefined, (err) => { clearLoading(); showViewerError(container, err); });
   } else if (ext === 'obj') {
     new OBJLoader().load(url, (object) => {
@@ -151,6 +185,7 @@ export function loadIntoViewer(containerId, fileId, ext, sizeBytes, meshVersion 
       currentMesh = object;
       scene.add(currentMesh);
       frameObject(currentMesh);
+      onModelReady();
     }, undefined, (err) => { clearLoading(); showViewerError(container, err); });
   } else if (ext === '3mf') {
     new GLTFLoader().load(`/api/files/${fileId}/mesh?v=${meshVersion}`, (gltf) => {
@@ -158,6 +193,7 @@ export function loadIntoViewer(containerId, fileId, ext, sizeBytes, meshVersion 
       currentMesh = gltf.scene;
       scene.add(currentMesh);
       frameObject(currentMesh);
+      onModelReady();
     }, undefined, () => {
       // Kein gueltiges GLB gecacht (404) - Fallback auf die alte Methode:
       // Original-3MF direkt im Browser parsen (kann bei grossen/komplexen
@@ -168,6 +204,7 @@ export function loadIntoViewer(containerId, fileId, ext, sizeBytes, meshVersion 
         currentMesh = object;
         scene.add(currentMesh);
         frameObject(currentMesh);
+        onModelReady();
       }, undefined, (err) => { clearLoading(); showViewerError(container, err); });
     });
   } else {
@@ -182,4 +219,122 @@ function showViewerError(container, err) {
   msg.style.padding = '0.75rem';
   msg.textContent = t('viewer.previewFailed', { msg: err && err.message ? err.message : String(err) });
   container.appendChild(msg);
+}
+
+// ---------------- Messung & Schnittebene ----------------
+
+function onModelReady() {
+  modelBox = new THREE.Box3().setFromObject(currentMesh);
+  document.dispatchEvent(new CustomEvent('viewer-ready'));
+}
+
+function meshList() {
+  const list = [];
+  if (currentMesh) currentMesh.traverse((c) => { if (c.isMesh && !c.userData.cap) list.push(c); });
+  return list;
+}
+
+export function setUnitScale(mmPerUnit) {
+  unitScaleMm = Number(mmPerUnit) > 0 ? Number(mmPerUnit) : 1;
+}
+
+function showLabel(text) {
+  if (!measureLabelEl) return;
+  measureLabelEl.textContent = text;
+  measureLabelEl.hidden = !text;
+}
+
+export function setMeasureMode(on) {
+  measureOn = !!on;
+  if (renderer) renderer.domElement.style.cursor = measureOn ? 'crosshair' : '';
+  if (measureOn && measurePts.length === 0) showLabel(t('measure.first'));
+  if (!measureOn) showLabel('');
+}
+
+export function clearMeasure() {
+  for (const o of measureObjs) {
+    if (scene) scene.remove(o);
+    if (o.geometry) o.geometry.dispose();
+    if (o.material) o.material.dispose();
+  }
+  measureObjs = [];
+  measurePts = [];
+  showLabel(measureOn ? t('measure.first') : '');
+}
+
+function pickPoint(ev) {
+  if (!currentMesh || !modelBox) return;
+  const rect = renderer.domElement.getBoundingClientRect();
+  const ndc = new THREE.Vector2(((ev.clientX - rect.left) / rect.width) * 2 - 1, -((ev.clientY - rect.top) / rect.height) * 2 + 1);
+  raycaster.setFromCamera(ndc, camera);
+  let hit = null;
+  for (const h of raycaster.intersectObjects(meshList(), false)) {
+    // weggeschnittene Teile duerfen nicht treffen (Clipping wirkt nur beim Zeichnen)
+    if (sectionOn && sectionPlane.distanceToPoint(h.point) < 0) continue;
+    hit = h; break;
+  }
+  if (!hit) return;
+  if (measurePts.length >= 2) clearMeasure();
+
+  const size = modelBox.getSize(new THREE.Vector3());
+  const r = (Math.max(size.x, size.y, size.z) || 1) * 0.008;
+  const marker = new THREE.Mesh(new THREE.SphereGeometry(r, 12, 12), new THREE.MeshBasicMaterial({ color: 0xffe14a, depthTest: false }));
+  marker.position.copy(hit.point);
+  marker.renderOrder = 999;
+  scene.add(marker);
+  measureObjs.push(marker);
+  measurePts.push(hit.point.clone());
+
+  if (measurePts.length === 1) {
+    showLabel(t('measure.second'));
+  } else {
+    const line = new THREE.Line(
+      new THREE.BufferGeometry().setFromPoints(measurePts),
+      new THREE.LineBasicMaterial({ color: 0xffe14a, depthTest: false }),
+    );
+    line.renderOrder = 998;
+    scene.add(line);
+    measureObjs.push(line);
+    const mm = measurePts[0].distanceTo(measurePts[1]) * unitScaleMm;
+    showLabel(t('measure.result', { mm: mm.toLocaleString(localeTag(), { maximumFractionDigits: 2 }) }));
+  }
+}
+
+// Schnittebene: axis 'x'|'y'|'z' (Welt, Y = oben), pos 0..1 innerhalb der Modellbox,
+// flip = andere Seite behalten. Gibt die Position in mm ab Modellrand + Gesamtlaenge zurueck.
+export function setSection({ on, axis = 'y', pos = 0.5, flip = false }) {
+  if (!currentMesh || !modelBox) return null;
+  sectionOn = !!on;
+  const i = { x: 0, y: 1, z: 2 }[axis] ?? 1;
+  const min = modelBox.min.getComponent(i);
+  const max = modelBox.max.getComponent(i);
+  const at = min + (max - min) * pos;
+  const normal = new THREE.Vector3();
+  normal.setComponent(i, flip ? -1 : 1);
+  const point = new THREE.Vector3();
+  point.setComponent(i, at);
+  sectionPlane.setFromNormalAndCoplanarPoint(normal, point);
+
+  for (const mesh of meshList()) {
+    const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+    for (const m of mats) {
+      m.clippingPlanes = sectionOn ? [sectionPlane] : [];
+      m.needsUpdate = true;
+    }
+    const existing = mesh.children.find((c) => c.userData.cap);
+    if (sectionOn && !existing) {
+      // Innenseite flach einfaerben: wo geschnitten wird, sieht man Rueckseiten
+      // dieser Huelle - das wirkt wie eine gefuellte Schnittflaeche (bei
+      // geschlossenen Netzen; bei offenen/fehlerhaften Netzen bleibt es hohl).
+      const cap = new THREE.Mesh(mesh.geometry, new THREE.MeshBasicMaterial({
+        color: 0x35d0c0, side: THREE.BackSide, clippingPlanes: [sectionPlane],
+      }));
+      cap.userData.cap = true;
+      mesh.add(cap);
+    } else if (!sectionOn && existing) {
+      mesh.remove(existing);
+      existing.material.dispose();
+    }
+  }
+  return { mm: (at - min) * unitScaleMm, totalMm: (max - min) * unitScaleMm };
 }

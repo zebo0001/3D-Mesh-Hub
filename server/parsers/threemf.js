@@ -185,6 +185,96 @@ function parseMeshGeometry(modelXmls) {
   return { triangles, bbox, volumeMm3: Math.abs(volume), areaMm2: area };
 }
 
+// ---- Filament-Info (Farben/Material/genutzte Slots), Stand 20.10.2026 ----
+// Verifiziert an 199 echten 3MF (Bambu/Orca/Creality): project_settings.config
+// enthaelt die KOMPLETTE Projekt-Palette (filament_colour/filament_type),
+// nicht nur die genutzten Farben. Genutzte Slots ergeben sich aus
+// model_settings.config (extruder je Objekt/Teil) und aus Mal-Farben im Mesh
+// (paint_color/mmu_segmentation). Echte Gramm gibt es nur bei bereits
+// geslicten Dateien (slice_info.config used_g, ca. 8 % der Dateien).
+//
+// Paint-Code-Dekodierung (nur einfache Codes ohne Dreiecks-Unterteilung):
+// "4" = Slot 1, "8" = Slot 2, "0C" = Slot 3, "1C" = Slot 4, "2C" = Slot 5 ...
+// Annahme aus dem Bambu/Orca-Format, noch nicht an Dateien mit bekannter
+// Zuordnung gegengeprueft - deshalb wird die Quelle mit ausgeliefert.
+function decodeSimplePaint(code) {
+  if (code === '4') return 1;
+  if (code === '8') return 2;
+  const m = /^([0-9A-Fa-f])C$/.exec(code);
+  if (m) return 3 + parseInt(m[1], 16);
+  return null; // 0 / komplex (unterteiltes Dreieck) -> ignorieren
+}
+
+function extractFilaments(zip, allModelXmls) {
+  const readText = (name) => {
+    const e = zip.getEntry(name);
+    return e ? e.getData().toString('utf8') : null;
+  };
+  const colors = [];
+  const types = [];
+  const ps = readText('Metadata/project_settings.config');
+  if (ps) {
+    try {
+      const j = JSON.parse(ps);
+      if (Array.isArray(j.filament_colour)) colors.push(...j.filament_colour);
+      if (Array.isArray(j.filament_type)) types.push(...j.filament_type);
+    } catch { /* kaputte Config: Palette bleibt leer */ }
+  }
+
+  // Genutzte Slots: Extruder-Metadaten + Paint-Codes
+  const used = new Map(); // slot -> Gewicht (Anzahl Dreiecke, bei Extruder-Meta 0)
+  const ms = readText('Metadata/model_settings.config');
+  let source = 'default';
+  if (ms) {
+    const re = /key="extruder"\s+value="(\d+)"/g;
+    let m;
+    while ((m = re.exec(ms)) !== null) {
+      const slot = parseInt(m[1], 10);
+      if (slot > 0) { used.set(slot, used.get(slot) || 0); source = 'extruder'; }
+    }
+  }
+  let paintTotal = 0;
+  const paintCount = new Map();
+  for (const xml of allModelXmls) {
+    const re = /(?:paint_color|mmu_segmentation)="([^"]*)"/g;
+    let m;
+    while ((m = re.exec(xml)) !== null) {
+      const slot = decodeSimplePaint(m[1]);
+      if (slot) { paintCount.set(slot, (paintCount.get(slot) || 0) + 1); paintTotal++; }
+    }
+  }
+  if (paintTotal > 0) {
+    for (const [slot, n] of paintCount) used.set(slot, n);
+    source = 'paint';
+  }
+  if (used.size === 0) used.set(1, 0);
+
+  // Echte Gramm aus geslicten Dateien
+  const gramsBySlot = new Map();
+  const si = readText('Metadata/slice_info.config');
+  if (si) {
+    const re = /<filament\b[^>]*>/g;
+    let m;
+    while ((m = re.exec(si)) !== null) {
+      const id = parseInt(getAttr(m[0], 'id'), 10);
+      const g = parseFloat(getAttr(m[0], 'used_g'));
+      if (id > 0 && Number.isFinite(g) && g > 0) gramsBySlot.set(id, g);
+    }
+  }
+
+  const slots = [...used.keys()].sort((a, b) => a - b);
+  const shareTotal = slots.reduce((s, k) => s + (used.get(k) || 0), 0);
+  const list = slots.map((slot) => ({
+    slot,
+    color: colors[slot - 1] ? String(colors[slot - 1]).slice(0, 7) : null, // #RRGGBB (Alpha abschneiden)
+    type: types[slot - 1] || null,
+    share: shareTotal > 0 ? (used.get(slot) || 0) / shareTotal : null,
+    grams: gramsBySlot.has(slot) ? gramsBySlot.get(slot) : null,
+  }));
+  if (!list.some((f) => f.color)) return null; // keine Palette -> nichts Brauchbares
+  return { source: gramsBySlot.size ? 'sliced' : source, filaments: list };
+}
+
 function parse3MF(buffer) {
   try {
     const zip = new AdmZip(buffer);
@@ -194,6 +284,9 @@ function parse3MF(buffer) {
     }
     const modelXml = modelEntry.getData().toString('utf8');
     const coreMeta = parseCoreMetadata(modelXml);
+    // Einheit laut 3MF-Spezifikation: Attribut unit am <model>-Tag, Standard millimeter.
+    const unitMatch = /<model\b[^>]*\bunit\s*=\s*"([^"]+)"/i.exec(modelXml);
+    const unit = unitMatch ? unitMatch[1].toLowerCase() : null; // null = nicht angegeben (Spezifikations-Standard mm)
     const vertexCount = countVertices(modelXml);
 
     // Geometrie: nicht nur aus der Root-Datei, sondern aus ALLEN *.model-
@@ -213,13 +306,15 @@ function parse3MF(buffer) {
     return {
       ok: true,
       coreMeta,
+      unit,
       vertexCountApprox: vertexCount,
       slicerFilesFound: slicerFiles,
       geometry, // null, falls in keiner *.model-Datei ein <mesh> gefunden/geparst werden konnte
+      filamentInfo: extractFilaments(zip, allModelXmls), // null, falls keine Palette vorhanden
     };
   } catch (err) {
     return { ok: false, error: String(err && err.message || err) };
   }
 }
 
-module.exports = { parse3MF };
+module.exports = { parse3MF, extractFilaments };

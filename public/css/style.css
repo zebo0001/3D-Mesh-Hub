@@ -168,18 +168,45 @@ body {
 /* ---- Detail-Overlay ---- */
 .overlay[hidden] { display: none; }
 .overlay {
-  position: fixed; inset: 0; background: rgba(6,7,10,0.7);
+  position: fixed; inset: 0; background: rgba(6,7,10,0.55);
+  -webkit-backdrop-filter: blur(10px) saturate(120%); backdrop-filter: blur(10px) saturate(120%);
   display: flex; align-items: center; justify-content: center; z-index: 50; padding: 1.5rem;
 }
+/* Glas-Look: halbtransparente Flaeche + Blur + feine helle Kante. Faellt ohne
+   color-mix/backdrop-filter auf die normale Panel-Farbe zurueck. */
 .overlay-panel {
-  background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius);
-  max-width: 720px; width: 100%; max-height: 90vh; overflow-y: auto; padding: 1.5rem; position: relative;
+  background: var(--panel);
+  background: color-mix(in srgb, var(--panel) 72%, transparent);
+  -webkit-backdrop-filter: blur(22px) saturate(140%); backdrop-filter: blur(22px) saturate(140%);
+  border: 1px solid rgba(255,255,255,0.12); border-radius: 18px;
+  box-shadow: 0 24px 70px rgba(0,0,0,0.45), inset 0 1px 0 rgba(255,255,255,0.08);
+  max-width: 1180px; width: 100%; max-height: 92vh; overflow-y: auto; padding: 1.5rem 1.75rem; position: relative;
 }
 .overlay-close {
-  position: absolute; top: 0.75rem; right: 0.75rem;
-  background: var(--panel-2); border: 1px solid var(--border); color: var(--text);
-  border-radius: 6px; width: 2rem; height: 2rem; cursor: pointer;
+  position: absolute; top: 0.9rem; right: 0.9rem; z-index: 2;
+  background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.14); color: var(--text);
+  border-radius: 50%; width: 2.1rem; height: 2.1rem; cursor: pointer;
+  -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
 }
+.overlay-close:hover { background: rgba(255,255,255,0.16); }
+
+/* Detailansicht: Kopf + zwei Spalten (3D-Ansicht/Metadaten | Formular/Boxen) */
+.detail-head { display: flex; align-items: center; gap: 0.9rem; flex-wrap: wrap; padding-right: 2.8rem; margin-bottom: 1rem; }
+.detail-head h2 { margin: 0; font-size: 1.25rem; word-break: break-word; }
+.detail-badges { display: flex; gap: 0.4rem; }
+.detail-chip {
+  font-size: 0.7rem; font-weight: 700; letter-spacing: 0.04em; padding: 0.15rem 0.6rem; border-radius: 999px;
+  background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.12); color: var(--muted);
+}
+.detail-grid { display: grid; grid-template-columns: 1fr; gap: 1.25rem; align-items: start; }
+@media (min-width: 900px) {
+  .detail-grid { grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); }
+  .detail-grid #viewer-canvas-wrap { height: 52vh; }
+  .detail-side { max-height: calc(92vh - 7.5rem); overflow-y: auto; padding-right: 0.25rem; }
+}
+.detail-side .notes-form { margin-top: 0; }
+.detail-grid #viewer-canvas-wrap { border-radius: 14px; border-color: rgba(255,255,255,0.1); }
+.detail-grid .estimate-box, .detail-grid .avail-box { background: rgba(255,255,255,0.04); border-color: rgba(255,255,255,0.1); border-radius: 12px; }
 
 #viewer-canvas-wrap {
   width: 100%; height: 40vh; background: #0d0f15; border: 1px solid var(--border); border-radius: 8px;
@@ -251,8 +278,14 @@ table.meta-table td:first-child { color: var(--muted); width: 40%; }
 #dlg-info .btn-secondary { display: inline-block; margin: 0.4rem 0 0.6rem; }
 
 /* ---- Bibliotheks-Dialog ---- */
-dialog { background: var(--panel); color: var(--text); border: 1px solid var(--border); border-radius: var(--radius); width: min(560px, 90vw); }
-dialog::backdrop { background: rgba(0,0,0,0.6); }
+dialog {
+  background: var(--panel);
+  background: color-mix(in srgb, var(--panel) 78%, transparent);
+  -webkit-backdrop-filter: blur(20px) saturate(140%); backdrop-filter: blur(20px) saturate(140%);
+  color: var(--text); border: 1px solid rgba(255,255,255,0.12); border-radius: 18px; width: min(560px, 90vw);
+  box-shadow: 0 24px 70px rgba(0,0,0,0.45), inset 0 1px 0 rgba(255,255,255,0.08);
+}
+dialog::backdrop { background: rgba(0,0,0,0.45); -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); }
 .browser-list, .lib-list { list-style: none; padding: 0; margin: 0.5rem 0; max-height: 240px; overflow-y: auto; }
 .browser-list li, .lib-list li { padding: 0.35rem 0.5rem; border-radius: 6px; cursor: pointer; display: flex; justify-content: space-between; align-items: center; gap: 0.5rem; }
 .browser-list li:hover { background: rgba(255,255,255,0.05); }
@@ -310,6 +343,31 @@ dialog button:hover { border-color: var(--accent); }
 #estimate-result { font-weight: 600; margin-bottom: 0.25rem; }
 #estimate-wall-input, #estimate-infill-input { width: 6rem; margin-right: 1rem; }
 
+/* ---- Ordnerbaum wie im Explorer (21.10.2026) ---- */
+.breadcrumb a { cursor: pointer; color: var(--accent); }
+
+/* ---- Idee 2: "Kann ich das drucken?" (20.10.2026) ---- */
+.avail-box { margin-top: 1rem; padding: 0.75rem; border: 1px solid var(--border); border-radius: 8px; background: var(--panel-2); }
+.avail-box[hidden] { display: none; }
+.avail-box h3 { margin: 0 0 0.5rem; font-size: 0.95rem; }
+.hist-line { font-size: 0.85rem; padding: 0.3rem 0; }
+.hist-line small { color: var(--muted); }
+.avail-overall { font-weight: 700; margin-bottom: 0.5rem; }
+.avail-overall-ok { color: #4ade80; }
+.avail-overall-low { color: #fbbf24; }
+.avail-overall-missing { color: #f87171; }
+.avail-overall-unknown { color: var(--muted); }
+.avail-row { display: flex; align-items: center; gap: 0.6rem; padding: 0.3rem 0; border-top: 1px solid var(--border); font-size: 0.85rem; }
+.avail-slot { display: flex; align-items: center; gap: 0.25rem; min-width: 4.2rem; }
+.avail-swatch { display: inline-block; width: 1rem; height: 1rem; border-radius: 50%; border: 1px solid var(--border); }
+.avail-text { flex: 1; }
+.avail-text small { color: var(--muted); }
+.avail-status { font-size: 0.75rem; font-weight: 700; }
+.avail-ok .avail-status { color: #4ade80; }
+.avail-low .avail-status { color: #fbbf24; }
+.avail-missing .avail-status { color: #f87171; }
+.avail-optional, .avail-unknown { opacity: 0.7; }
+
 /* ---- Stufe 3: Slicer-Quelle-Badge in der Detailansicht (29.09.2026, siehe
 Vault "Filament-Verbrauch-Integration-Konzept" Abschnitt "Stufe 3") ---- */
 .source-badge {
@@ -333,3 +391,62 @@ display: flex; flex-direction: column; gap: 0.2rem; font-size: 0.78rem; color: v
 .slicer-profile-form input[type="file"] { font-size: 0.78rem; color: var(--muted); }
 .slicer-profile-form button { align-self: flex-start; }
 #slicer-profile-list li strong { color: var(--accent-cyan); font-weight: 700; }
+
+
+/* ---- Kategorien & Tags (21.10.2026) ---- */
+.filter-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; margin: 0 0 1rem; }
+.filter-bar[hidden], .filter-bar [hidden] { display: none; }
+.filter-bar select {
+  background: var(--panel); color: var(--text); border: 1px solid var(--border); border-radius: 8px; padding: 0.4rem 0.6rem;
+}
+.tag-chips { display: flex; flex-wrap: wrap; gap: 0.35rem; }
+.tag-chip {
+  background: var(--panel-2); color: var(--muted); border: 1px solid var(--border); border-radius: 999px;
+  padding: 0.2rem 0.65rem; font-size: 0.78rem; cursor: pointer; font-family: inherit;
+}
+.tag-chip span { opacity: 0.7; margin-left: 0.15rem; }
+.tag-chip:hover { border-color: var(--accent); color: var(--text); }
+.tag-chip.active { background: linear-gradient(135deg, var(--accent), var(--accent-2)); color: #fff; border-color: transparent; }
+.tag-chip.small { padding: 0.1rem 0.5rem; font-size: 0.72rem; }
+.tag-suggest { display: flex; flex-wrap: wrap; gap: 0.3rem; margin-top: 0.3rem; }
+.mini-tag {
+  background: var(--panel-2); border: 1px solid var(--border); border-radius: 999px; padding: 0.02rem 0.45rem; font-size: 0.68rem;
+}
+.filter-bar .btn-secondary {
+  background: var(--panel-2); color: var(--text); border: 1px solid var(--border); border-radius: 8px;
+  padding: 0.3rem 0.7rem; font-size: 0.8rem; cursor: pointer; font-family: inherit;
+}
+.filter-bar .btn-secondary:hover { border-color: var(--accent); }
+
+/* ---- Einheit/Massstab ---- */
+.unit-box { margin-top: 0.75rem; padding: 0.6rem 0.75rem; border-radius: 12px; border: 1px solid rgba(255,255,255,0.1); background: rgba(255,255,255,0.04); font-size: 0.82rem; }
+.unit-box.warn { border-color: var(--warn); }
+.unit-box.ok .unit-status::before { content: '\2713 '; color: var(--accent-cyan); }
+.unit-box.warn .unit-status::before { content: '\26A0 '; color: var(--warn); }
+.unit-form { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; margin-top: 0.5rem; }
+.unit-form label { display: flex; align-items: center; gap: 0.4rem; color: var(--muted); }
+.unit-form input { width: 6rem; background: var(--panel-2); color: var(--text); border: 1px solid var(--border); border-radius: 8px; padding: 0.3rem 0.5rem; font-family: inherit; }
+.unit-form .btn-secondary { background: var(--panel-2); color: var(--text); border: 1px solid var(--border); border-radius: 8px; padding: 0.3rem 0.7rem; cursor: pointer; font-family: inherit; }
+.unit-form .btn-secondary:hover { border-color: var(--accent); }
+
+/* ---- Viewer-Werkzeuge: Messung & Schnitt ---- */
+.viewer-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; margin-top: 0.5rem; font-size: 0.8rem; }
+.vt-btn {
+  background: var(--panel-2); color: var(--text); border: 1px solid var(--border); border-radius: 8px;
+  padding: 0.3rem 0.7rem; cursor: pointer; font-family: inherit;
+}
+.vt-btn:hover:not(:disabled) { border-color: var(--accent); }
+.vt-btn.active { background: linear-gradient(135deg, var(--accent), var(--accent-2)); color: #fff; border-color: transparent; }
+.vt-btn:disabled, .vt-check input:disabled { opacity: 0.5; cursor: not-allowed; }
+.vt-sep { width: 1px; height: 1.2rem; background: var(--border); }
+.vt-check { display: inline-flex; align-items: center; gap: 0.3rem; color: var(--muted); }
+#vt-section-controls { display: inline-flex; align-items: center; gap: 0.5rem; }
+#vt-section-controls[hidden] { display: none; }
+#vt-axis { background: var(--panel-2); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 0.15rem 0.3rem; }
+#vt-pos { width: 9rem; }
+.measure-label {
+  position: absolute; left: 0.6rem; bottom: 0.6rem; z-index: 2; padding: 0.3rem 0.65rem; border-radius: 8px;
+  background: rgba(13,15,21,0.8); color: #ffe14a; font-size: 0.82rem; font-weight: 600; pointer-events: none;
+  -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
+}
+.measure-label[hidden] { display: none; }

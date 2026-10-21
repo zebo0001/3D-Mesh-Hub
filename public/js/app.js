@@ -1,4 +1,4 @@
-import { loadIntoViewer } from './viewer.js';
+import { loadIntoViewer, setUnitScale, setMeasureMode, clearMeasure, setSection } from './viewer.js';
 import { t, getLang, setLang, applyStaticTranslations, localeTag, sortLocale } from './i18n.js';
 
 const gridEl = document.getElementById('grid');
@@ -23,6 +23,12 @@ let folderFilter = null; // rel_path einer Bibliothek/eines Ordners, wenn aus ei
 let currentDetailId = null; // Datei-ID, wenn das Detail-Overlay offen ist
 let searchTerm = '';
 let sortBy = 'name';
+let activeCategory = ''; // gewaehlte Kategorie ('' = alle)
+const activeTags = new Set(); // gewaehlte Tags (UND-Verknuepfung), kleingeschrieben
+const categorySelect = document.getElementById('category-select');
+const tagChipsEl = document.getElementById('tag-chips');
+const filterBarEl = document.getElementById('filter-bar');
+const btnClearFilters = document.getElementById('btn-clear-filters');
 
 // ---- Browser-Verlauf (History API) ----
 // Ohne das hier navigiert die Rueck-Taste/der Zurueck-Button des Browsers NICHT
@@ -87,6 +93,73 @@ return String(s || '').replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>':
 }
 function escapeAttr(s) { return escapeHtml(s).replace(/"/g, '&quot;'); }
 
+// ---- Tags & Kategorien ----
+function tagsOf(f) {
+return String(f.tags || '').split(',').map((x) => x.trim()).filter(Boolean);
+}
+function filtersActive() {
+return !!activeCategory || activeTags.size > 0;
+}
+function matchesFilters(f) {
+if (activeCategory && (f.category || '').toLowerCase() !== activeCategory.toLowerCase()) return false;
+if (activeTags.size) {
+const have = new Set(tagsOf(f).map((x) => x.toLowerCase()));
+for (const tg of activeTags) if (!have.has(tg)) return false;
+}
+return true;
+}
+function matchesSearch(f) {
+if (!searchTerm) return true;
+return f.filename.toLowerCase().includes(searchTerm)
+|| (f.category || '').toLowerCase().includes(searchTerm)
+|| tagsOf(f).some((x) => x.toLowerCase().includes(searchTerm));
+}
+// Haeufigkeiten aus der geladenen Dateiliste (fehlende Dateien zaehlen nicht)
+function collectFacets() {
+const cats = new Map();
+const tags = new Map();
+for (const f of allFiles) {
+if (f.missing) continue;
+if (f.category) {
+const k = f.category.toLowerCase();
+const e = cats.get(k) || { name: f.category, count: 0 };
+e.count++; cats.set(k, e);
+}
+for (const tg of tagsOf(f)) {
+const k = tg.toLowerCase();
+const e = tags.get(k) || { name: tg, key: k, count: 0 };
+e.count++; tags.set(k, e);
+}
+}
+return {
+cats: [...cats.values()].sort((a, b) => a.name.localeCompare(b.name, sortLocale(), { sensitivity: 'base' })),
+tags: [...tags.values()].sort((a, b) => b.count - a.count || a.name.localeCompare(b.name, sortLocale(), { sensitivity: 'base' })),
+};
+}
+function renderFilterBar() {
+const { cats, tags } = collectFacets();
+// Gewaehlte Filter, die es nicht mehr gibt (z.B. Tag entfernt), verwerfen
+if (activeCategory && !cats.some((c) => c.name.toLowerCase() === activeCategory.toLowerCase())) activeCategory = '';
+for (const tg of [...activeTags]) if (!tags.some((x) => x.key === tg)) activeTags.delete(tg);
+
+filterBarEl.hidden = cats.length === 0 && tags.length === 0;
+categorySelect.hidden = cats.length === 0;
+categorySelect.innerHTML = `<option value="">${escapeHtml(t('filter.allCategories'))}</option>` +
+cats.map((c) => `<option value="${escapeAttr(c.name)}"${c.name.toLowerCase() === activeCategory.toLowerCase() ? ' selected' : ''}>${escapeHtml(c.name)} (${c.count})</option>`).join('');
+tagChipsEl.innerHTML = tags.map((x) =>
+`<button type="button" class="tag-chip${activeTags.has(x.key) ? ' active' : ''}" data-tag="${escapeAttr(x.key)}">#${escapeHtml(x.name)} <span>${x.count}</span></button>`).join('');
+tagChipsEl.querySelectorAll('.tag-chip').forEach((b) => b.addEventListener('click', () => {
+const k = b.dataset.tag;
+if (activeTags.has(k)) activeTags.delete(k); else activeTags.add(k);
+renderFilterBar();
+render();
+}));
+btnClearFilters.textContent = t('filter.clear');
+btnClearFilters.hidden = !filtersActive();
+}
+categorySelect.addEventListener('change', () => { activeCategory = categorySelect.value; renderFilterBar(); render(); });
+btnClearFilters.addEventListener('click', () => { activeCategory = ''; activeTags.clear(); renderFilterBar(); render(); });
+
 // ---- Laden ----
 async function loadAll() {
 const [stats, folders, files] = await Promise.all([
@@ -95,6 +168,8 @@ api('/api/stats'), api('/api/folders'), api('/api/files'),
 renderStats(stats);
 allFolders = folders;
 allFiles = files;
+buildTree();
+renderFilterBar();
 render();
 }
 
@@ -108,15 +183,173 @@ document.getElementById('stat-obj').textContent = stats.by_ext.obj || 0;
 
 // ---- Ansicht rendern ----
 function render() {
+// Ordner-Ansicht = Explorer-Stil (21.10.2026): beginnt in der Wurzel, zeigt
+// Unterordner + Dateien des aktuellen Ordners, Klick auf einen Ordner geht
+// hinein, Brotkrumen-Pfad fuehrt zurueck. Die flache "Dateien"-Ansicht bleibt.
+if (currentView === 'folders') {
 updateBreadcrumb();
-if (currentView === 'folders' && folderFilter === null) {
-renderFolderGrid();
+renderBrowse();
 } else {
+updateBreadcrumb();
 renderFileGrid();
 }
 }
 
+// Ordnerstruktur wird komplett clientseitig aus /api/files aufgebaut (die
+// rel_path-Werte enthalten die volle Struktur) - kein eigener Endpoint.
+let treeRoot = null;
+
+function dirOf(f) {
+return f.rel_path.slice(0, f.rel_path.length - f.filename.length).replace(/\\/g, '/').replace(/\/+$/, '');
+}
+
+function buildTree() {
+const root = { name: '', path: '', children: new Map(), files: [], count: 0 };
+for (const f of allFiles) {
+if (f.missing) continue;
+let node = root;
+node.count++;
+let acc = '';
+for (const part of dirOf(f).split('/').filter(Boolean)) {
+acc = acc ? acc + '/' + part : part;
+if (!node.children.has(part)) node.children.set(part, { name: part, path: acc, children: new Map(), files: [], count: 0 });
+node = node.children.get(part);
+node.count++;
+}
+node.files.push(f);
+}
+treeRoot = root;
+}
+
+function findNode(path) {
+let n = treeRoot;
+for (const part of String(path || '').split('/').filter(Boolean)) n = n && n.children.get(part);
+return n || null;
+}
+
+function subtreeFiles(node, out = []) {
+out.push(...node.files);
+for (const c of node.children.values()) subtreeFiles(c, out);
+return out;
+}
+
+function sortedChildren(node) {
+return [...node.children.values()].sort((a, b) => a.name.localeCompare(b.name, sortLocale(), { numeric: true }));
+}
+
+function navigateToFolder(path) {
+currentView = 'folders';
+folderFilter = path || null; // null = Wurzel
+setActiveToggle();
+render();
+pushAppState();
+}
+
+function folderCardEl(node) {
+const files = subtreeFiles(node);
+const thumbFile = files[0];
+const thumbSrc = thumbFile ? `/api/files/${thumbFile.id}/thumbnail?v=${thumbFile.thumbnail_version || 0}` : '/img/no-preview.svg';
+const byExt = {};
+for (const f of files) byExt[f.ext] = (byExt[f.ext] || 0) + 1;
+const badges = Object.entries(byExt).map(([ext, n]) => `<span class="format-badge">${ext.toUpperCase()} ${n}</span>`).join('');
+const total = files.reduce((s, f) => s + f.size_bytes, 0);
+const card = document.createElement('div');
+card.className = 'card';
+card.innerHTML = `
+<div class="card-thumb"><img src="${thumbSrc}" loading="lazy" alt="" onerror="this.src='/img/no-preview.svg'"><span class="ext-badge">${t('folderCard.badge')}</span></div>
+<div class="card-body">
+<div class="card-kicker">${node.children.size ? t('tree.subfolders', { n: node.children.size }) : t('folderCard.kicker')}</div>
+<div class="card-title" title="${escapeAttr(node.name)}">${escapeHtml(node.name)}</div>
+<div class="card-meta">${badges}<span>${t('folderCard.fileCount', { n: files.length })}</span><span>${formatBytes(total)}</span></div>
+</div>`;
+card.addEventListener('click', () => navigateToFolder(node.path));
+card._stats = { name: node.name, mtime: files.reduce((m, f) => (f.mtime > m ? f.mtime : m), ''), size: total };
+return card;
+}
+
+function cardTagsHtml(f) {
+const tg = tagsOf(f);
+if (!tg.length) return '';
+const shown = tg.slice(0, 3).map((x) => `<span class="mini-tag">#${escapeHtml(x)}</span>`).join('');
+return shown + (tg.length > 3 ? `<span class="mini-tag">+${tg.length - 3}</span>` : '');
+}
+
+function fileCardEl(f) {
+const card = document.createElement('div');
+card.className = 'card' + (f.missing ? ' missing' : '');
+const thumbSrc = `/api/files/${f.id}/thumbnail?v=${f.thumbnail_version || 0}`;
+card.innerHTML = `
+<div class="card-thumb"><img src="${thumbSrc}" loading="lazy" alt="" onerror="this.src='/img/no-preview.svg'"><span class="ext-badge">${f.ext}</span></div>
+<div class="card-body">
+<div class="card-kicker">${f.status ? escapeHtml(f.status) : (f.category ? escapeHtml(f.category) : t('fileCard.kicker'))}${f.missing ? t('fileCard.missing') : ''}</div>
+<div class="card-title" title="${escapeAttr(f.filename)}">${escapeHtml(f.filename)}</div>
+<div class="card-meta"><span>${formatBytes(f.size_bytes)}</span>${cardTagsHtml(f)}</div>
+</div>`;
+card.addEventListener('click', () => openDetail(f.id));
+return card;
+}
+
+// Inhalt des gewaehlten Ordners wie im Explorer: erst Unterordner, dann die
+// Dateien direkt in diesem Ordner. Mit Suchbegriff: Treffer aus dem ganzen Baum.
+function renderBrowse() {
+if (!treeRoot) return;
+const cur = folderFilter || '';
+const node = findNode(cur);
+let folders = [];
+let files = [];
+if (searchTerm || filtersActive()) {
+// Suche/Filter gelten fuer den ganzen Baum (flache Trefferliste). Ordner
+// zeigt nur die Suche, nicht ein Tag-/Kategorie-Filter.
+const walkAll = (n) => {
+for (const c of n.children.values()) {
+if (!filtersActive() && c.name.toLowerCase().includes(searchTerm)) folders.push(c);
+walkAll(c);
+}
+files.push(...n.files.filter((f) => matchesSearch(f) && matchesFilters(f)));
+};
+walkAll(treeRoot);
+} else if (node) {
+folders = sortedChildren(node);
+files = [...node.files];
+}
+
+const folderCards = folders.map(folderCardEl);
+const sorters = {
+name: (a, b) => a._stats.name.localeCompare(b._stats.name, sortLocale(), { numeric: true }),
+date: (a, b) => b._stats.mtime.localeCompare(a._stats.mtime),
+size: (a, b) => b._stats.size - a._stats.size,
+};
+folderCards.sort(sorters[sortBy] || sorters.name);
+files = applySort(files, {
+name: (a, b) => a.filename.localeCompare(b.filename, sortLocale(), { numeric: true }),
+date: (a, b) => (b.mtime || '').localeCompare(a.mtime || ''),
+size: (a, b) => b.size_bytes - a.size_bytes,
+});
+
+gridEl.innerHTML = '';
+if (!folderCards.length && !files.length) {
+gridEl.innerHTML = `<p class="hint">${(searchTerm || filtersActive()) ? t('grid.noFiles') : t('tree.empty')}</p>`;
+return;
+}
+for (const c of folderCards) gridEl.appendChild(c);
+for (const f of files) gridEl.appendChild(fileCardEl(f));
+trackThumbnailProgress();
+}
+
 function updateBreadcrumb() {
+if (currentView === 'folders') {
+const parts = (folderFilter || '').split('/').filter(Boolean);
+if (!parts.length) { breadcrumbEl.hidden = true; return; }
+breadcrumbEl.hidden = false;
+let acc = '';
+const crumbs = parts.map((p, i) => {
+acc = acc ? acc + '/' + p : p;
+return i === parts.length - 1 ? escapeHtml(p) : `<a data-path="${escapeAttr(acc)}">${escapeHtml(p)}</a>`;
+});
+breadcrumbEl.innerHTML = [`<a data-path="">${t('tree.root')}</a>`, ...crumbs].join(' / ');
+breadcrumbEl.querySelectorAll('a').forEach((a) => a.addEventListener('click', () => navigateToFolder(a.dataset.path)));
+return;
+}
 if (folderFilter !== null) {
 breadcrumbEl.hidden = false;
 breadcrumbEl.innerHTML = `<a id="bc-back">${t('breadcrumb.allFolders')}</a> / ${escapeHtml(folderFilter || t('breadcrumb.root'))}`;
@@ -175,52 +408,13 @@ img.addEventListener('error', onSettled, { once: true });
 }
 }
 
-function renderFolderGrid() {
-let list = allFolders.filter(f => !searchTerm || f.name.toLowerCase().includes(searchTerm));
-list = applySort(list, {
-name: (a, b) => a.name.localeCompare(b.name, sortLocale()),
-date: (a, b) => (b.latest_mtime || '').localeCompare(a.latest_mtime || ''),
-size: (a, b) => b.total_bytes - a.total_bytes,
-});
-
-if (list.length === 0) {
-gridEl.innerHTML = `<p class="hint">${t('grid.noFolders')}</p>`;
-return;
-}
-
-gridEl.innerHTML = '';
-for (const f of list) {
-const card = document.createElement('div');
-card.className = 'card';
-const thumbSrc = f.thumbnail_file_id ? `/api/files/${f.thumbnail_file_id}/thumbnail?v=${f.thumbnail_version || 0}` : '/img/no-preview.svg';
-const badges = Object.entries(f.by_ext).map(([ext, n]) => `<span class="format-badge">${ext.toUpperCase()} ${n}</span>`).join('');
-card.innerHTML = `
-<div class="card-thumb"><img src="${thumbSrc}" loading="lazy" alt="" onerror="this.src='/img/no-preview.svg'"><span class="ext-badge">${t('folderCard.badge')}</span></div>
-<div class="card-body">
-<div class="card-kicker">${t('folderCard.kicker')}</div>
-<div class="card-title" title="${escapeAttr(f.name)}">${escapeHtml(f.name)}</div>
-<div class="card-meta">${badges}<span>${t('folderCard.fileCount', { n: f.file_count })}</span><span>${formatBytes(f.total_bytes)}</span></div>
-</div>
-`;
-card.addEventListener('click', () => {
-folderFilter = f.rel_path;
-currentView = 'files';
-setActiveToggle();
-render();
-pushAppState();
-});
-gridEl.appendChild(card);
-}
-trackThumbnailProgress();
-}
-
 function renderFileGrid() {
 let list = allFiles.filter(f => {
 if (folderFilter !== null) {
 const dir = f.rel_path.slice(0, f.rel_path.length - f.filename.length).replace(/[/\\]+$/, '');
 if (dir !== folderFilter) return false;
 }
-if (searchTerm && !f.filename.toLowerCase().includes(searchTerm)) return false;
+if (!matchesSearch(f) || !matchesFilters(f)) return false;
 return true;
 });
 list = applySort(list, {
@@ -242,15 +436,102 @@ const thumbSrc = `/api/files/${f.id}/thumbnail?v=${f.thumbnail_version || 0}`;
 card.innerHTML = `
 <div class="card-thumb"><img src="${thumbSrc}" loading="lazy" alt="" onerror="this.src='/img/no-preview.svg'"><span class="ext-badge">${f.ext}</span></div>
 <div class="card-body">
-<div class="card-kicker">${f.status ? escapeHtml(f.status) : t('fileCard.kicker')}${f.missing ? t('fileCard.missing') : ''}</div>
+<div class="card-kicker">${f.status ? escapeHtml(f.status) : (f.category ? escapeHtml(f.category) : t('fileCard.kicker'))}${f.missing ? t('fileCard.missing') : ''}</div>
 <div class="card-title" title="${escapeAttr(f.filename)}">${escapeHtml(f.filename)}</div>
-<div class="card-meta"><span>${formatBytes(f.size_bytes)}</span></div>
+<div class="card-meta"><span>${formatBytes(f.size_bytes)}</span>${cardTagsHtml(f)}</div>
 </div>
 `;
 card.addEventListener('click', () => openDetail(f.id));
 gridEl.appendChild(card);
 }
 trackThumbnailProgress();
+}
+
+// Werkzeugleiste unter dem 3D-Viewer: Punkt-zu-Punkt-Messung und Schnittebene.
+// Bleibt deaktiviert, bis der Viewer das Modell geladen hat ('viewer-ready').
+function viewerToolsHtml() {
+return `<div class="viewer-tools" id="viewer-tools">
+<button type="button" class="vt-btn" id="vt-measure" disabled>${t('measure.btn')}</button>
+<button type="button" class="vt-btn" id="vt-measure-clear" hidden>${t('measure.clear')}</button>
+<span class="vt-sep"></span>
+<label class="vt-check"><input type="checkbox" id="vt-section" disabled> ${t('section.btn')}</label>
+<span id="vt-section-controls" hidden>
+<select id="vt-axis"><option value="x">X</option><option value="y" selected>${t('section.axisY')}</option><option value="z">Z</option></select>
+<input type="range" id="vt-pos" min="0" max="1000" value="500" />
+<label class="vt-check"><input type="checkbox" id="vt-flip"> ${t('section.flip')}</label>
+<span id="vt-section-mm" class="hint"></span>
+</span>
+</div>`;
+}
+
+function wireViewerTools(unitScaleMm) {
+const tools = document.getElementById('viewer-tools');
+if (!tools) return;
+setUnitScale(unitScaleMm);
+const measureBtn = document.getElementById('vt-measure');
+const clearBtn = document.getElementById('vt-measure-clear');
+const secCheck = document.getElementById('vt-section');
+const secControls = document.getElementById('vt-section-controls');
+const axisSel = document.getElementById('vt-axis');
+const posRange = document.getElementById('vt-pos');
+const flipCheck = document.getElementById('vt-flip');
+const mmEl = document.getElementById('vt-section-mm');
+
+document.addEventListener('viewer-ready', () => {
+measureBtn.disabled = false;
+secCheck.disabled = false;
+}, { once: true });
+
+let measuring = false;
+measureBtn.addEventListener('click', () => {
+measuring = !measuring;
+measureBtn.classList.toggle('active', measuring);
+clearBtn.hidden = !measuring;
+setMeasureMode(measuring);
+});
+clearBtn.addEventListener('click', () => clearMeasure());
+
+const applySection = () => {
+secControls.hidden = !secCheck.checked;
+const r = setSection({ on: secCheck.checked, axis: axisSel.value, pos: Number(posRange.value) / 1000, flip: flipCheck.checked });
+mmEl.textContent = r && secCheck.checked
+? t('section.pos', { mm: r.mm.toLocaleString(localeTag(), { maximumFractionDigits: 1 }), total: r.totalMm.toLocaleString(localeTag(), { maximumFractionDigits: 1 }) })
+: '';
+};
+secCheck.addEventListener('change', applySection);
+axisSel.addEventListener('change', applySection);
+posRange.addEventListener('input', applySection);
+flipCheck.addEventListener('change', applySection);
+}
+
+// ---- Einheit/Massstab: Pruefung, ob die Datei Millimeter-Angaben hat ----
+// 3MF nennt die Einheit im Modell (Standard mm), STL/OBJ nie - dort ist mm nur
+// eine Annahme. Ist sie unsicher oder die Groesse ungewoehnlich, kann hier die
+// tatsaechliche Laenge der groessten Kante eingegeben werden (Faktor wird je
+// Datei gespeichert und wirkt auf Masse, Volumen und die spaetere Messung).
+function unitBoxHtml(ui, geo) {
+const hasBox = !!(geo && !geo.error && geo.bbox);
+const f2 = (n) => (n == null ? '–' : (Math.round(n * 10) / 10).toLocaleString(localeTag()));
+let cls = 'ok';
+let text;
+if (ui.user_scale != null) {
+text = t('unit.userSet', { f: Number(ui.user_scale.toPrecision(5)), mm: f2(ui.max_edge_mm) });
+} else if (ui.source === 'declared') {
+text = ui.unit === 'millimeter' ? t('unit.declaredMm') : t('unit.declaredOther', { unit: ui.unit });
+if (ui.unusual) { cls = 'warn'; text += ' · ' + t('unit.unusual', { mm: f2(ui.max_edge_mm) }); }
+} else {
+cls = 'warn';
+text = t('unit.assumed');
+if (ui.unusual) text += ' · ' + t('unit.unusual', { mm: f2(ui.max_edge_mm) });
+}
+const showForm = hasBox && (ui.source === 'assumed' || ui.unusual || ui.user_scale != null);
+const form = showForm ? `
+<form class="unit-form" id="unit-form">
+<label>${t('unit.formLabel')} <input type="number" name="edge" min="0.001" step="any" placeholder="z.B. 120" /></label>
+<button type="submit" class="btn-secondary">${t('unit.apply')}</button>
+${ui.user_scale != null ? `<button type="button" class="btn-secondary" id="unit-reset">${t('unit.reset')}</button>` : ''}
+</form>` : '';
+return `<div class="unit-box ${cls}" id="unit-box"><div class="unit-status">${escapeHtml(text)}</div>${form}</div>`;
 }
 
 // ---- Detail-Overlay ----
@@ -284,15 +565,17 @@ async function renderDetail(f, settings = {}) {
 const geo = f.geometry;
 const meta = f.embedded_meta;
 
+const ui = f.unit_info || { source: 'assumed', unit: null, declared_factor: 1, user_scale: null, scale_to_mm: 1, max_edge_mm: null, unusual: false };
+const sc = ui.scale_to_mm || 1; // Faktor Modelleinheit -> mm
 let geoRows = '';
 if (geo && !geo.error) {
 if (geo.bbox) {
-const size = [0, 1, 2].map(i => (geo.bbox.max[i] - geo.bbox.min[i]).toFixed(1));
-geoRows += `<tr><td>${t('detail.dimensions')}</td><td>${size.join(' × ')}</td></tr>`;
+const size = [0, 1, 2].map(i => ((geo.bbox.max[i] - geo.bbox.min[i]) * sc).toFixed(1));
+geoRows += `<tr><td>${t('detail.dimensions')}</td><td>${size.join(' × ')} mm</td></tr>`;
 }
 if (geo.triangles != null) geoRows += `<tr><td>${t('detail.triangles')}</td><td>${geo.triangles.toLocaleString(localeTag())}</td></tr>`;
-if (geo.volumeMm3Approx != null) geoRows += `<tr><td>${t('detail.volume')}</td><td>${(geo.volumeMm3Approx / 1000).toFixed(2)} cm³</td></tr>`;
-if (geo.surfaceAreaMm2Approx != null) geoRows += `<tr><td>${t('detail.surfaceArea')}</td><td>${(geo.surfaceAreaMm2Approx / 100).toFixed(1)} cm²</td></tr>`;
+if (geo.volumeMm3Approx != null) geoRows += `<tr><td>${t('detail.volume')}</td><td>${(geo.volumeMm3Approx * sc ** 3 / 1000).toFixed(2)} cm³</td></tr>`;
+if (geo.surfaceAreaMm2Approx != null) geoRows += `<tr><td>${t('detail.surfaceArea')}</td><td>${(geo.surfaceAreaMm2Approx * sc ** 2 / 100).toFixed(1)} cm²</td></tr>`;
 // OBJ liefert (noch) keine Dreieckszahl/kein Volumen, siehe parsers/obj.js
 if (geo.vertices != null) geoRows += `<tr><td>${t('detail.vertices')}</td><td>${geo.vertices.toLocaleString(localeTag())}</td></tr>`;
 if (geo.faces != null) geoRows += `<tr><td>${t('detail.faces')}</td><td>${geo.faces.toLocaleString(localeTag())}</td></tr>`;
@@ -348,8 +631,14 @@ ${t('estimate.scaleLabel')}
 : '';
 
 detailEl.innerHTML = `
+<div class="detail-head">
 <h2>${escapeHtml(f.filename)}</h2>
+<div class="detail-badges"><span class="detail-chip">${escapeHtml(String(f.ext).toUpperCase())}</span><span class="detail-chip">${formatBytes(f.size_bytes)}</span></div>
+</div>
+<div class="detail-grid">
+<div class="detail-main">
 <div id="viewer-canvas-wrap"></div>
+${f.missing ? '' : viewerToolsHtml()}
 <table class="meta-table">
 <tr><td>${t('detail.path')}</td><td>${escapeHtml(f.rel_path)}${openLocalCell}</td></tr>
 <tr><td>${t('detail.size')}</td><td>${formatBytes(f.size_bytes)}</td></tr>
@@ -357,13 +646,21 @@ detailEl.innerHTML = `
 ${geoRows}
 ${metaRows}
 </table>
+${unitBoxHtml(ui, geo)}
 ${f.local_file_url ? `<div class="open-local-hint" id="open-local-hint" hidden>${t('detail.openLocalHintPointer')}</div>` : ''}
+</div>
+<div class="detail-side">
 <form class="notes-form" id="notes-form">
 <label>${t('form.status')}
 <input name="status" value="${escapeAttr(f.status)}" placeholder="${t('form.statusPlaceholder')}" />
 </label>
+<label>${t('form.category')}
+<input name="category" list="category-options" value="${escapeAttr(f.category)}" placeholder="${t('form.categoryPlaceholder')}" autocomplete="off" />
+<datalist id="category-options">${collectFacets().cats.map((c) => `<option value="${escapeAttr(c.name)}"></option>`).join('')}</datalist>
+</label>
 <label>${t('form.tags')}
-<input name="tags" value="${escapeAttr(f.tags)}" placeholder="${t('form.tagsPlaceholder')}" />
+<input name="tags" value="${escapeAttr(f.tags)}" placeholder="${t('form.tagsPlaceholder')}" autocomplete="off" />
+<div class="tag-suggest" id="tag-suggest"></div>
 </label>
 <label>${t('form.notes')}
 <textarea name="notes" placeholder="${t('form.notesPlaceholder')}">${escapeHtml(f.notes)}</textarea>
@@ -381,6 +678,10 @@ ${lagerFetchError ? `<span class="hint">${t('lager.fetchError', { msg: lagerFetc
 <span class="hint" id="notes-saved-hint"></span>
 </form>
 ${estimateSection}
+${settings && settings.lager_enabled ? `<div class="avail-box" id="hist-box" hidden><h3>${t('hist.title')}</h3><div id="hist-body" class="hint"></div></div>` : ''}
+${f.ext === '3mf' && settings && settings.lager_enabled ? `<div class="avail-box" id="avail-box"><h3>${t('avail.title')}</h3><div id="avail-body" class="hint">${t('avail.loading')}</div></div>` : ''}
+</div>
+</div>
 `;
 
 const filamentRowsEl = document.getElementById('filament-rows');
@@ -457,6 +758,44 @@ lagerBookStatusEl.textContent = t('lager.bookError', { msg: err.message });
 });
 }
 
+// Bereits vorhandene Tags als anklickbare Vorschlaege unter dem Tag-Feld
+const tagInputEl = document.querySelector('#notes-form input[name="tags"]');
+const tagSuggestEl = document.getElementById('tag-suggest');
+function renderTagSuggestions() {
+const current = new Set(tagInputEl.value.split(',').map((x) => x.trim().toLowerCase()).filter(Boolean));
+const open = collectFacets().tags.filter((x) => !current.has(x.key)).slice(0, 12);
+tagSuggestEl.innerHTML = open.map((x) => `<button type="button" class="tag-chip small" data-tag="${escapeAttr(x.name)}">+ ${escapeHtml(x.name)}</button>`).join('');
+tagSuggestEl.querySelectorAll('button').forEach((b) => b.addEventListener('click', () => {
+const v = tagInputEl.value.trim().replace(/,\s*$/, '');
+tagInputEl.value = v ? `${v}, ${b.dataset.tag}` : b.dataset.tag;
+renderTagSuggestions();
+}));
+}
+tagInputEl.addEventListener('input', renderTagSuggestions);
+renderTagSuggestions();
+
+const unitFormEl = document.getElementById('unit-form');
+if (unitFormEl && geo && geo.bbox) {
+const rawMax = Math.max(...[0, 1, 2].map((i) => geo.bbox.max[i] - geo.bbox.min[i]));
+const saveScale = async (scale) => {
+await api(`/api/files/${f.id}/unit`, {
+method: 'PUT',
+headers: { 'Content-Type': 'application/json' },
+body: JSON.stringify({ scale }),
+});
+await loadAll(); // Dateiliste neu laden, damit Karten/Filter konsistent bleiben
+await openDetail(f.id, { skipHistory: true });
+};
+unitFormEl.addEventListener('submit', async (ev) => {
+ev.preventDefault();
+const mm = Number(new FormData(unitFormEl).get('edge'));
+if (!Number.isFinite(mm) || mm <= 0 || !(rawMax > 0)) return;
+await saveScale(mm / rawMax);
+});
+const resetBtn = document.getElementById('unit-reset');
+if (resetBtn) resetBtn.addEventListener('click', () => saveScale(null));
+}
+
 document.getElementById('notes-form').addEventListener('submit', async (ev) => {
 ev.preventDefault();
 const fd = new FormData(ev.target);
@@ -466,15 +805,21 @@ color: row.querySelector('.filament-color').value.trim(),
 grams: Number(row.querySelector('.filament-grams').value),
 }))
 .filter((r) => r.color !== '' || Number.isFinite(r.grams) && r.grams > 0);
-const body = { notes: fd.get('notes'), tags: fd.get('tags'), status: fd.get('status'), filament };
-await api(`/api/files/${f.id}/meta`, {
+const body = { notes: fd.get('notes'), tags: fd.get('tags'), category: fd.get('category'), status: fd.get('status'), filament };
+const saved = await api(`/api/files/${f.id}/meta`, {
 method: 'PUT',
 headers: { 'Content-Type': 'application/json' },
 body: JSON.stringify(body),
 });
 document.getElementById('notes-saved-hint').textContent = t('form.saved');
 const idx = allFiles.findIndex(x => x.id === f.id);
-if (idx >= 0) Object.assign(allFiles[idx], body);
+// Server liefert die normalisierten Tags/Kategorie zurueck (getrimmt, ohne Duplikate)
+if (idx >= 0) Object.assign(allFiles[idx], body, { tags: saved.tags, category: saved.category });
+ev.target.elements.tags.value = saved.tags;
+ev.target.elements.category.value = saved.category;
+renderTagSuggestions();
+renderFilterBar();
+render();
 // Die eingetragene Filamentmenge ist die Kalibrierungsgrundlage der
 // Skalierungs-Schaetzung (siehe server/estimate.js) - nach dem Speichern
 // neu berechnen, sonst zeigt die Schaetzung noch den alten Stand.
@@ -549,6 +894,55 @@ estimateDebounceTimer = setTimeout(refreshEstimate, 300);
 refreshEstimate();
 }
 
+// Druckhistorie (Idee 3, Stufe 1): wie oft gedruckt, reales Filament, zuletzt wann.
+const histBoxEl = document.getElementById('hist-box');
+if (histBoxEl) {
+api(`/api/files/${f.id}/prints`).then((r) => {
+if (!r.ok) return;
+const fmt = (s, tag) => {
+if (!s.count && !s.aborted) return '';
+const when = s.lastTs ? new Date(s.lastTs * 1000).toLocaleDateString(localeTag()) : '-';
+const grams = s.avgGrams != null ? t('hist.avg', { g: s.avgGrams, n: s.gramsSamples }) : t('hist.noGrams');
+const printers = s.printers.length ? ` - ${escapeHtml(s.printers.join(', '))}` : '';
+const ab = s.aborted ? ` (${t('hist.aborted', { n: s.aborted })})` : '';
+return `<div class="hist-line"><strong>${t('hist.count', { n: s.count })}</strong>${ab} - ${grams} - ${t('hist.last', { d: when })}${printers}
+${tag ? `<br><small>${tag}</small>` : ''}</div>`;
+};
+const html = fmt(r.exact, '') + fmt(r.similar, t('hist.similar'));
+if (!html) return; // keine Treffer -> Block bleibt ausgeblendet
+histBoxEl.hidden = false;
+document.getElementById('hist-body').className = '';
+document.getElementById('hist-body').innerHTML = html;
+}).catch(() => { /* Historie ist optional - Fehler still ignorieren */ });
+}
+
+// "Kann ich das drucken?" (Idee 2): Farben der 3MF gegen Lager-Spulen abgleichen.
+const availBoxEl = document.getElementById('avail-box');
+if (availBoxEl) {
+const availBodyEl = document.getElementById('avail-body');
+api(`/api/files/${f.id}/availability`).then((r) => {
+if (!r.ok) { availBoxEl.hidden = true; return; } // keine Farb-Info in der Datei -> Block ausblenden
+const rows = r.filaments.map((fl) => {
+const need = fl.neededGrams == null ? '' : t(fl.neededExact ? 'avail.need' : 'avail.needEst', { n: fl.neededGrams });
+const m = fl.match;
+const have = m
+? t('avail.have', { id: m.spoolId, name: escapeHtml(m.name || ''), rem: Math.round(m.remaining || 0) }) +
+(m.quality === 'close' ? ` - ${t('avail.close', { d: m.deltaE })}` : '') +
+(m.location ? ` - ${escapeHtml(m.location)}` : '')
+: '';
+const swatch = (hex) => hex ? `<span class="avail-swatch" style="background:${escapeAttr(hex)}"></span>` : '';
+return `<div class="avail-row avail-${fl.status}">
+<span class="avail-slot">${swatch(fl.color)}${m ? '&rarr;' + swatch(m.colorHex) : ''}</span>
+<span class="avail-text">${escapeHtml(fl.type || '')} ${need}<br><small>${have}</small></span>
+<span class="avail-status">${t('avail.status.' + fl.status)}</span></div>`;
+}).join('');
+availBodyEl.className = '';
+availBodyEl.innerHTML = `<div class="avail-overall avail-overall-${r.overall}">${t('avail.overall.' + r.overall)}</div>${rows}
+<p class="hint">${t(r.exact ? 'avail.hintSliced' : 'avail.hintEstimate')}</p>`;
+}).catch((err) => { availBodyEl.textContent = t('avail.error', { msg: err.message }); });
+}
+
+if (!f.missing) wireViewerTools(sc);
 if (!f.missing) loadIntoViewer('viewer-canvas-wrap', f.id, f.ext, f.size_bytes, f.mesh_version || 0);
 }
 
@@ -876,9 +1270,40 @@ setTimeout(() => { slicerProfileStatusEl.textContent = ''; }, 4000);
 });
 
 async function browseTo(p) {
-const data = await api(`/api/browse?path=${encodeURIComponent(p)}`);
+const [data, libs] = await Promise.all([
+api(`/api/browse?path=${encodeURIComponent(p)}`),
+api('/api/libraries'),
+]);
 libCurrentPathEl.innerHTML = `<code>/data${data.path ? '/' + data.path : ''}</code>`;
 libBrowserEl.innerHTML = '';
+
+// Liegt ein Pfad bereits in einem Wurzelordner? (Wurzel '' = gesamter Datenordner)
+const isCovered = (rel) => libs.some((l) => l.rel_path === '' || rel === l.rel_path || rel.startsWith(l.rel_path + '/'));
+
+const addRoot = async (relPath) => {
+try {
+await api('/api/libraries', {
+method: 'POST',
+headers: { 'Content-Type': 'application/json' },
+body: JSON.stringify({ rel_path: relPath }),
+});
+} catch (err) {
+alert(err.message);
+}
+await refreshLibraries();
+await loadAll();
+await browseTo(p);
+};
+
+if (!p && !libs.some((l) => l.rel_path === '')) {
+const all = document.createElement('li');
+all.innerHTML = `<span><b>${t('lib.addAllTitle')}</b></span>`;
+const allBtn = document.createElement('button');
+allBtn.textContent = t('lib.addAsRoot');
+allBtn.addEventListener('click', () => addRoot(''));
+all.appendChild(allBtn);
+libBrowserEl.appendChild(all);
+}
 
 if (p) {
 const up = document.createElement('li');
@@ -890,31 +1315,18 @@ for (const dir of data.directories) {
 const li = document.createElement('li');
 const rel = p ? `${p}/${dir}` : dir;
 li.innerHTML = `<span>${escapeHtml(dir)}</span>`;
-
-const recursiveLabel = document.createElement('label');
-recursiveLabel.className = 'inline-check';
-recursiveLabel.title = t('lib.recursiveTitle');
-const recursiveCheck = document.createElement('input');
-recursiveCheck.type = 'checkbox';
-recursiveCheck.checked = true;
-recursiveLabel.appendChild(recursiveCheck);
-recursiveLabel.appendChild(document.createTextNode(t('lib.recursiveLabel')));
-
-const addBtn = document.createElement('button');
-addBtn.textContent = t('lib.addAsLibrary');
-addBtn.addEventListener('click', async (ev) => {
-ev.stopPropagation();
-await api('/api/libraries', {
-method: 'POST',
-headers: { 'Content-Type': 'application/json' },
-body: JSON.stringify({ rel_path: rel, recursive: recursiveCheck.checked }),
-});
-await refreshLibraries();
-await loadAll();
-});
-li.appendChild(recursiveLabel);
-li.appendChild(addBtn);
 li.querySelector('span').addEventListener('click', () => browseTo(rel));
+if (isCovered(rel)) {
+const tag = document.createElement('em');
+tag.className = 'hint';
+tag.textContent = t('lib.alreadyIncluded');
+li.appendChild(tag);
+} else {
+const addBtn = document.createElement('button');
+addBtn.textContent = t('lib.addAsRoot');
+addBtn.addEventListener('click', (ev) => { ev.stopPropagation(); addRoot(rel); });
+li.appendChild(addBtn);
+}
 libBrowserEl.appendChild(li);
 }
 if (data.directories.length === 0 && !p) {
@@ -930,24 +1342,7 @@ libListEl.innerHTML += `<li class="hint">${t('lib.noneSelected')}</li>`;
 }
 for (const lib of libs) {
 const li = document.createElement('li');
-li.innerHTML = `<span>${escapeHtml(lib.rel_path)}</span>`;
-
-const recursiveLabel = document.createElement('label');
-recursiveLabel.className = 'inline-check';
-const recursiveCheck = document.createElement('input');
-recursiveCheck.type = 'checkbox';
-recursiveCheck.checked = !!lib.recursive;
-recursiveLabel.appendChild(recursiveCheck);
-recursiveLabel.appendChild(document.createTextNode(t('lib.recursiveLabel')));
-recursiveCheck.addEventListener('change', async () => {
-await api(`/api/libraries/${lib.id}`, {
-method: 'PUT',
-headers: { 'Content-Type': 'application/json' },
-body: JSON.stringify({ recursive: recursiveCheck.checked }),
-});
-await loadAll();
-});
-
+li.innerHTML = `<span>${lib.rel_path === '' ? escapeHtml(t('lib.wholeRoot')) : escapeHtml(lib.rel_path)}</span>`;
 const rm = document.createElement('button');
 rm.textContent = t('lib.remove');
 rm.addEventListener('click', async () => {
@@ -955,7 +1350,6 @@ await api(`/api/libraries/${lib.id}`, { method: 'DELETE' });
 await refreshLibraries();
 await loadAll();
 });
-li.appendChild(recursiveLabel);
 li.appendChild(rm);
 libListEl.appendChild(li);
 }

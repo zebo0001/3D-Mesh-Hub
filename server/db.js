@@ -85,6 +85,8 @@ const libraryColumns = db.prepare("PRAGMA table_info(libraries)").all().map(c =>
 if (!libraryColumns.includes('recursive')) {
 db.exec("ALTER TABLE libraries ADD COLUMN recursive INTEGER NOT NULL DEFAULT 1");
 }
+// Wurzelordner zeigen immer alles darunter - altes "nur direkte Dateien" entfaellt.
+db.exec("UPDATE libraries SET recursive = 1 WHERE recursive = 0");
 
 // Migration: 'filament_json'-Spalte nachruesten fuer Bestandsinstallationen
 // (Feature kam nach dem ersten Release dazu).
@@ -113,6 +115,19 @@ db.exec("ALTER TABLE files ADD COLUMN render_version INTEGER");
 // ersten Release dazu).
 if (!fileMetaColumns.includes('orientation_json')) {
 db.exec("ALTER TABLE file_meta ADD COLUMN orientation_json TEXT DEFAULT '{\"x\":0,\"y\":0,\"z\":0}'");
+}
+
+// Migration: 'category'-Spalte (eine Kategorie je Datei, zusaetzlich zu den
+// frei vergebbaren Tags; User-Wunsch 21.10.2026 "beides").
+if (!fileMetaColumns.includes('category')) {
+db.exec("ALTER TABLE file_meta ADD COLUMN category TEXT DEFAULT ''");
+}
+
+// Migration: 'unit_scale' = vom Nutzer gesetzter Faktor "Modelleinheit -> mm"
+// (NULL = keiner gesetzt). STL/OBJ tragen keine Einheit; bei Dateien, die nicht
+// in mm vorliegen, kann so die tatsaechliche Groesse angegeben werden.
+if (!fileMetaColumns.includes('unit_scale')) {
+db.exec("ALTER TABLE file_meta ADD COLUMN unit_scale REAL");
 }
 
 module.exports = db;

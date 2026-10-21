@@ -2,9 +2,11 @@ const path = require('path');
 const fs = require('fs');
 const express = require('express');
 const db = require('./db');
-const { scanAllLibraries, scanLibrary, safeResolve, DATA_ROOT } = require('./scanner');
+const { scanAllLibraries, scanAllLibrariesAsync, scanLibrary, safeResolve, DATA_ROOT } = require('./scanner');
 const thumbnails = require('./thumbnails');
 const { estimateScaledFilament } = require('./estimate');
+const { checkAvailability } = require('./availability');
+const { matchPrints, summarize } = require('./printmatch');
 
 // ---- "Datei am PC oeffnen"-Link (file://) ----
 // HOST_DATA_ROOT ist der ECHTE Pfad auf dem Host-Rechner (aus .env DATA_ROOT),
@@ -77,28 +79,29 @@ res.json(db.prepare('SELECT * FROM libraries ORDER BY rel_path').all());
 
 app.post('/api/libraries', (req, res) => {
 const relPath = String(req.body.rel_path || '').replace(/^[/\\]+/, '');
-const recursive = req.body.recursive === false ? 0 : 1; // Default: alle Unterordner mit durchsuchen
+// Ein Wurzelordner zeigt immer alles darunter (kein Abwaehlen von Unterordnern).
+const recursive = 1;
 try {
 safeResolve(relPath);
 } catch (err) {
 return res.status(400).json({ error: err.message });
+}
+const inside = (child, parent) => parent === '' || child === parent || child.startsWith(parent + '/');
+const existing = db.prepare('SELECT id, rel_path FROM libraries').all();
+if (existing.some((l) => inside(relPath, l.rel_path))) {
+return res.status(409).json({ error: 'Dieser Ordner liegt bereits in einem vorhandenen Wurzelordner.' });
 }
 try {
 db.prepare('INSERT INTO libraries (rel_path, recursive) VALUES (?, ?)').run(relPath, recursive);
 } catch (err) {
 return res.status(409).json({ error: 'Bibliothek existiert bereits oder ungueltig: ' + err.message });
 }
-const result = scanLibrary(relPath, !!recursive);
-res.json({ ok: true, rel_path: relPath, recursive: !!recursive, scan: result });
-});
-
-app.put('/api/libraries/:id', (req, res) => {
-const lib = db.prepare('SELECT * FROM libraries WHERE id = ?').get(req.params.id);
-if (!lib) return res.status(404).json({ error: 'Bibliothek nicht gefunden' });
-const recursive = req.body.recursive === false ? 0 : 1;
-db.prepare('UPDATE libraries SET recursive = ? WHERE id = ?').run(recursive, req.params.id);
-const result = scanLibrary(lib.rel_path, !!recursive);
-res.json({ ok: true, recursive: !!recursive, scan: result });
+// Bisherige Wurzelordner innerhalb des neuen sind jetzt ueberfluessig.
+for (const l of existing) {
+if (inside(l.rel_path, relPath)) db.prepare('DELETE FROM libraries WHERE id = ?').run(l.id);
+}
+const result = scanLibrary(relPath, true);
+res.json({ ok: true, rel_path: relPath, recursive: true, scan: result });
 });
 
 app.delete('/api/libraries/:id', (req, res) => {
@@ -452,7 +455,7 @@ res.json(warmupProgress);
 // ---- Dateiliste (inkl. eigener Notizen/Tags) ----
 app.get('/api/files', (req, res) => {
 const rows = db.prepare(`
-SELECT f.*, m.notes, m.tags, m.status, m.filament_json, m.orientation_json
+SELECT f.*, m.notes, m.tags, m.category, m.unit_scale, m.status, m.filament_json, m.orientation_json
 FROM files f
 LEFT JOIN file_meta m ON m.file_id = f.id
 ORDER BY f.filename COLLATE NOCASE
@@ -462,12 +465,34 @@ res.json(rows.map(formatFileRow));
 
 app.get('/api/files/:id', (req, res) => {
 const row = db.prepare(`
-SELECT f.*, m.notes, m.tags, m.status, m.filament_json, m.orientation_json
+SELECT f.*, m.notes, m.tags, m.category, m.unit_scale, m.status, m.filament_json, m.orientation_json
 FROM files f LEFT JOIN file_meta m ON m.file_id = f.id
 WHERE f.id = ?
 `).get(req.params.id);
 if (!row) return res.status(404).json({ error: 'Datei nicht in der Datenbank' });
 res.json(formatFileRow(row));
+});
+
+// ---- Einheit/Massstab einer Datei setzen (scale = Faktor Modelleinheit -> mm; null = zuruecksetzen) ----
+app.put('/api/files/:id/unit', (req, res) => {
+const exists = db.prepare('SELECT 1 FROM files WHERE id = ?').get(req.params.id);
+if (!exists) return res.status(404).json({ error: 'Datei nicht in der Datenbank' });
+let scale = null;
+if (req.body.scale !== null && req.body.scale !== undefined && req.body.scale !== '') {
+scale = Number(req.body.scale);
+if (!Number.isFinite(scale) || scale < 1e-6 || scale > 1e6) {
+return res.status(400).json({ error: 'Ungueltiger Faktor' });
+}
+}
+db.prepare(`
+INSERT INTO file_meta (file_id, unit_scale, updated_at) VALUES (?, ?, datetime('now'))
+ON CONFLICT(file_id) DO UPDATE SET unit_scale = excluded.unit_scale, updated_at = datetime('now')
+`).run(req.params.id, scale);
+const row = db.prepare(`
+SELECT f.*, m.notes, m.tags, m.category, m.unit_scale, m.status, m.filament_json, m.orientation_json
+FROM files f LEFT JOIN file_meta m ON m.file_id = f.id WHERE f.id = ?
+`).get(req.params.id);
+res.json({ ok: true, unit_info: formatFileRow(row).unit_info });
 });
 
 // Filament-Eintraege validieren/normalisieren: erwartet [{color, grams}, ...].
@@ -509,6 +534,47 @@ return { ...DEFAULT_ORIENTATION };
 }
 }
 
+// Tags: kommagetrennt, getrimmt, ohne Leere, ohne Duplikate (Gross-/Kleinschreibung egal).
+function normalizeTags(input) {
+const seen = new Set();
+const out = [];
+for (const part of String(input || '').split(/[,;\n]/)) {
+const t = part.trim().slice(0, 40);
+if (!t || seen.has(t.toLowerCase())) continue;
+seen.add(t.toLowerCase());
+out.push(t);
+}
+return out;
+}
+
+// Einheit der Datei: 3MF nennt sie im <model unit=...> (Standard mm), STL/OBJ
+// kennen keine - dort wird mm nur ANGENOMMEN. Faktoren: Modelleinheit -> mm.
+const UNIT_TO_MM = { micron: 0.001, millimeter: 1, centimeter: 10, inch: 25.4, foot: 304.8, meter: 1000 };
+
+function buildUnitInfo(row, geometry, embedded) {
+const declared = row.ext === '3mf';
+const unitName = declared ? ((embedded && embedded.unit) || 'millimeter') : null;
+const declaredFactor = declared ? (UNIT_TO_MM[unitName] || 1) : 1;
+const userScale = Number(row.unit_scale) > 0 ? Number(row.unit_scale) : null;
+const effective = userScale != null ? userScale : declaredFactor;
+let maxEdgeMm = null;
+if (geometry && geometry.bbox && geometry.bbox.min && geometry.bbox.max) {
+const raw = [0, 1, 2].map((i) => geometry.bbox.max[i] - geometry.bbox.min[i]);
+if (raw.every(Number.isFinite)) maxEdgeMm = Math.max(...raw) * effective;
+}
+// Plausibilitaet nur als Hinweis: typische druckbare Teile liegen zwischen ~5 und ~500 mm.
+const unusual = maxEdgeMm != null && (maxEdgeMm < 5 || maxEdgeMm > 500);
+return {
+source: declared ? 'declared' : 'assumed', // 'declared' = steht in der Datei, 'assumed' = mm nur angenommen
+unit: unitName,
+declared_factor: declaredFactor,
+user_scale: userScale,
+scale_to_mm: effective,
+max_edge_mm: maxEdgeMm,
+unusual,
+};
+}
+
 function formatFileRow(row) {
 let filament = [];
 try {
@@ -525,11 +591,13 @@ missing: !!row.missing,
 geometry: row.geometry_json ? JSON.parse(row.geometry_json) : null,
 embedded_meta: row.embedded_meta_json ? JSON.parse(row.embedded_meta_json) : null,
 notes: row.notes || '',
-tags: row.tags || '',
+tags: normalizeTags(row.tags).join(', '),
+category: row.category || '',
 status: row.status || '',
 filament,
 filament_total_grams: filament.reduce((sum, r) => sum + (Number(r.grams) || 0), 0),
 orientation: parseOrientation(row.orientation_json),
+unit_info: buildUnitInfo(row, row.geometry_json ? JSON.parse(row.geometry_json) : null, row.embedded_meta_json ? JSON.parse(row.embedded_meta_json) : null),
 thumbnail_version: thumbnails.getThumbnailVersion(row.id),
 mesh_version: row.ext === '3mf' ? thumbnails.getMeshVersion(row.id) : 0,
 local_file_url: buildLocalFileUrl(row.rel_path),
@@ -538,17 +606,19 @@ local_file_url: buildLocalFileUrl(row.rel_path),
 
 // ---- Eigene Notizen/Tags/Status/Filamentmenge speichern ----
 app.put('/api/files/:id/meta', (req, res) => {
-const { notes = '', tags = '', status = '' } = req.body;
+const { notes = '', status = '' } = req.body;
+const tags = normalizeTags(req.body.tags).join(', ');
+const category = String(req.body.category || '').trim().slice(0, 60);
 const filament = sanitizeFilament(req.body.filament);
 const exists = db.prepare('SELECT 1 FROM files WHERE id = ?').get(req.params.id);
 if (!exists) return res.status(404).json({ error: 'Datei nicht in der Datenbank' });
 db.prepare(`
-INSERT INTO file_meta (file_id, notes, tags, status, filament_json, updated_at)
-VALUES (?, ?, ?, ?, ?, datetime('now'))
-ON CONFLICT(file_id) DO UPDATE SET notes=excluded.notes, tags=excluded.tags, status=excluded.status,
+INSERT INTO file_meta (file_id, notes, tags, category, status, filament_json, updated_at)
+VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
+ON CONFLICT(file_id) DO UPDATE SET notes=excluded.notes, tags=excluded.tags, category=excluded.category, status=excluded.status,
 filament_json=excluded.filament_json, updated_at=datetime('now')
-`).run(req.params.id, notes, tags, status, JSON.stringify(filament));
-res.json({ ok: true });
+`).run(req.params.id, notes, tags, category, status, JSON.stringify(filament));
+res.json({ ok: true, tags, category });
 });
 
 // Ruft den externen Slicer-Service auf (siehe slicer-service/server.js,
@@ -659,6 +729,83 @@ return res.json({ ok: false, error: String((err && err.message) || err), source:
 // Grund mitliefern, damit das Frontend ihn z.B. im Badge-Tooltip zeigen
 // kann statt den Fehlschlag stillschweigend zu verschlucken.
 return res.json({ ...estimateOnly(), slicer_error: String((err && err.message) || err) });
+}
+});
+
+// ---- "Kann ich das drucken?": Farben/Materialien der 3MF gegen die Spulen des
+// Lagersystems abgleichen (siehe availability.js). Nur mit aktivierter
+// Lager-Integration; liefert sonst 400 und das Frontend blendet den Block aus.
+app.get('/api/files/:id/availability', async (req, res) => {
+if (!getLagerEnabled()) return res.status(400).json({ error: 'Lager-Integration ist deaktiviert' });
+const base = getLagerServiceUrl();
+if (!base) return res.status(400).json({ error: 'lager_service_url ist nicht gesetzt' });
+
+const row = db.prepare('SELECT geometry_json, embedded_meta_json FROM files WHERE id = ?').get(req.params.id);
+if (!row) return res.status(404).json({ error: 'Datei nicht in der Datenbank' });
+let meta = null, geometry = null;
+try { meta = row.embedded_meta_json ? JSON.parse(row.embedded_meta_json) : null; } catch { meta = null; }
+try { geometry = row.geometry_json ? JSON.parse(row.geometry_json) : null; } catch { geometry = null; }
+if (!meta || !meta.filamentInfo || !meta.filamentInfo.filaments || !meta.filamentInfo.filaments.length) {
+return res.json({ ok: false, reason: 'no-filament-info' });
+}
+
+let spools;
+try {
+const controller = new AbortController();
+const timeout = setTimeout(() => controller.abort(), 10000);
+const response = await fetch(base.replace(/\/+$/, '') + '/spools', { signal: controller.signal });
+clearTimeout(timeout);
+if (!response.ok) return res.status(502).json({ error: 'Lager-Service antwortete mit ' + response.status });
+const data = await response.json();
+spools = Array.isArray(data.spools) ? data.spools : [];
+} catch (err) {
+return res.status(502).json({ error: 'Lager-Service nicht erreichbar: ' + (err.message || err) });
+}
+
+const result = checkAvailability(meta.filamentInfo, spools, geometry, {
+wallThicknessMm: getWallThicknessMm(),
+infillFraction: getInfillFraction(),
+});
+res.json({ ok: true, ...result });
+});
+
+// ---- Druckhistorie zu einer Datei (Idee 3, Stufe 1): Drucke aus dem Lagersystem
+// (GET /prints) per Namen zuordnen und zusammenfassen. 60 s Cache, damit das
+// Oeffnen mehrerer Dateien nacheinander den Lager-Service nicht jedes Mal
+// ansprechen muss.
+let printsCache = { at: 0, items: [] };
+async function fetchLagerPrints(base) {
+if (Date.now() - printsCache.at < 60000) return printsCache.items;
+const controller = new AbortController();
+const timeout = setTimeout(() => controller.abort(), 10000);
+try {
+const response = await fetch(base.replace(/\/+$/, '') + '/prints?limit=5000', { signal: controller.signal });
+if (!response.ok) throw new Error('Lager-Service antwortete mit ' + response.status);
+const data = await response.json();
+printsCache = { at: Date.now(), items: Array.isArray(data.items) ? data.items : [] };
+return printsCache.items;
+} finally {
+clearTimeout(timeout);
+}
+}
+
+app.get('/api/files/:id/prints', async (req, res) => {
+if (!getLagerEnabled()) return res.status(400).json({ error: 'Lager-Integration ist deaktiviert' });
+const base = getLagerServiceUrl();
+if (!base) return res.status(400).json({ error: 'lager_service_url ist nicht gesetzt' });
+const row = db.prepare('SELECT filename FROM files WHERE id = ?').get(req.params.id);
+if (!row) return res.status(404).json({ error: 'Datei nicht in der Datenbank' });
+try {
+const prints = await fetchLagerPrints(base);
+const { exact, similar } = matchPrints(row.filename, prints);
+const slim = (p) => ({ id: p.id, name: p.name, printer: p.printer, start_ts: p.start_ts, grams: p.grams, status: p.status, state: p.state });
+res.json({
+ok: true,
+exact: { ...summarize(exact), items: exact.slice(0, 10).map(slim) },
+similar: { ...summarize(similar), items: similar.slice(0, 10).map(slim) },
+});
+} catch (err) {
+res.status(502).json({ error: 'Lager-Service nicht erreichbar: ' + (err.message || err) });
 }
 });
 
@@ -862,7 +1009,7 @@ const libs = db.prepare('SELECT rel_path FROM libraries').all();
 if (libs.length === 0) return; // frische Installation, noch keine Bibliothek eingerichtet
 
 console.log(`Hintergrund-Scan laeuft (${reason})...`);
-scanAllLibraries();
+await scanAllLibrariesAsync();
 
 if (!getThumbnailsEnabled()) {
 console.log('Hintergrund-Scan fertig. Automatische Vorschaubild-Erzeugung ist deaktiviert, ueberspringe Thumbnails.');

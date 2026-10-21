@@ -83,6 +83,14 @@ Docker-Volume) erhalten, auch nach einem Rescan.
   Such-/Sortier-Toolbar.
 - Klick auf eine Datei öffnet ein Overlay mit 3D-Viewer, ausgelesenen
   Metadaten und dem eigenen Notizen/Tags/Status-Formular.
+- **Explorer-Navigation** über Wurzelordner (Einstellungen): alles unterhalb wird
+  angezeigt, Brotkrumen-Pfad, Suche über den ganzen Baum.
+- **Kategorien und Tags** mit Filterleiste (Kategorie + mehrere Tags).
+- **Detailansicht** zweispaltig im Glas-Look; mit "Kann ich das drucken?"
+  (Abgleich mit Spulen des Lagersystems) und Druckhistorie.
+- **Einheiten-Prüfung**: 3MF-Einheit wird gelesen, bei STL/OBJ wird mm nur
+  angenommen und vermerkt; tatsächliche Größe kann je Datei eingegeben werden.
+- **Messen und Schnittebene** im 3D-Viewer (Punkt-zu-Punkt in mm, Schnitt per Regler).
 - Stat-Kacheln oben (Ordner, Dateien gesamt, STL/3MF/OBJ-Anzahl).
 - Schwebende Anzeige unten rechts ("Vorschaubilder werden geladen… X/Y"), solange die
   sichtbaren Karten noch Thumbnails nachladen.
@@ -254,6 +262,6 @@ Speichern ignoriert.
 ## Stand / Nächste Schritte
 
 - [ ] Chromium/Puppeteer-Rendering im echten Container verifizieren
-- [ ] Mehrstufige Ordner-Navigation (aktuell: eine Ebene, direkter Elternordner)
+- [x] Mehrstufige Ordner-Navigation (Explorer-Ansicht, seit 1.7.0)
 - [ ] Lizenz-Entscheidung (Vorschlag: MIT, analog zu Filament-Lager) + Repo auf
       Forgejo/GitHub anlegen

@@ -81,6 +81,14 @@ preserved across a rescan.
 - **File view**: flat list of all scanned files, same search/sort toolbar.
 - Clicking a file opens an overlay with the 3D viewer, extracted metadata,
   and your own notes/tags/status form.
+- **Explorer navigation** via root folders (settings): everything below is
+  shown, breadcrumb path, search across the whole tree.
+- **Categories and tags** with a filter bar (category + multiple tags).
+- **Detail view** in two columns with a glass look; includes "Can I print this?"
+  (matching against spools in the storage system) and print history.
+- **Unit check**: 3MF unit is read; for STL/OBJ mm is only assumed and flagged;
+  the real size can be entered per file.
+- **Measure and section plane** in the 3D viewer (point-to-point in mm, cut via slider).
 - Stat tiles at the top (folders, total files, STL/3MF/OBJ counts).
 - Floating indicator bottom right ("Loading thumbnails… X/Y") while the
   visible cards are still loading thumbnails.
@@ -253,6 +261,6 @@ empty rows are ignored when saving.
 ## Status / next steps
 
 - [ ] Verify Chromium/Puppeteer rendering in the real container
-- [ ] Multi-level folder navigation (currently: one level, direct parent folder)
+- [x] Multi-level folder navigation (explorer view, since 1.7.0)
 - [ ] License decision (proposal: MIT, similar to Filament-Lager) + create repo
       on Forgejo/GitHub

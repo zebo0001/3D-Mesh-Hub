@@ -87,6 +87,12 @@ document.documentElement.setAttribute('data-theme', pref);
 <span id="scan-status" class="hint"></span>
 </section>
 
+<section class="filter-bar" id="filter-bar" hidden>
+<select id="category-select" aria-label="Kategorie"></select>
+<div class="tag-chips" id="tag-chips"></div>
+<button type="button" id="btn-clear-filters" class="btn-secondary" hidden></button>
+</section>
+
 <main class="content">
 <div class="breadcrumb hint" id="breadcrumb" hidden></div>
 <div class="grid" id="grid">

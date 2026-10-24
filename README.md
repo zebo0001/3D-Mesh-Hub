@@ -60,7 +60,7 @@ werden, läuft danach komplett über die Oberfläche (wie bei Jellyfin/Plex).
 | Format | 3D-Vorschau | Thumbnail | Ausgelesene Metadaten |
 |---|---|---|---|
 | STL (ASCII + binär) | Ja | Ja (server-gerendert) | Dreieckszahl, Bounding Box, Näherungsvolumen |
-| 3MF | Ja | Ja (server-gerendert) | Core-3MF-Metadaten (Titel/Ersteller/Anwendung etc.), erkennt vorhandene Slicer-Zusatzdateien |
+| 3MF | Ja | Ja (server-gerendert) | Core-3MF-Metadaten (Titel/Ersteller/Anwendung etc.), Slicer-Zusatzdateien, Farbpalette, Materialtyp und genutzte Slots, echte Gramm aus geslicten Dateien, Einheit (mm/cm/m/inch) |
 | OBJ | Ja | Ja (server-gerendert) | Vertex-/Flächenzahl, Bounding Box (kein Volumen, da OBJ auch Nicht-Dreiecksflächen haben kann) |
 
 STEP (CAD-B-Rep-Format, kein Dreiecksnetz) wird bewusst NICHT unterstützt: im

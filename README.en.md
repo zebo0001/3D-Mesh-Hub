@@ -59,7 +59,7 @@ Jellyfin/Plex).
 | Format | 3D preview | Thumbnail | Extracted metadata |
 |---|---|---|---|
 | STL (ASCII + binary) | Yes | Yes (server-rendered) | Triangle count, bounding box, approximate volume |
-| 3MF | Yes | Yes (server-rendered) | Core 3MF metadata (title/creator/application etc.), detects existing slicer extras |
+| 3MF | Yes | Yes (server-rendered) | Core 3MF metadata (title/creator/application etc.), slicer extras, colour palette, material type and used slots, real grams from sliced files, unit (mm/cm/m/inch) |
 | OBJ | Yes | Yes (server-rendered) | Vertex/face count, bounding box (no volume, since OBJ can also contain non-triangular faces) |
 
 STEP (a CAD B-rep format, not a triangle mesh) is deliberately **not**

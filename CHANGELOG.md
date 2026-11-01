@@ -3,7 +3,17 @@
 Alle nennenswerten Aenderungen an 3D Mesh Hub werden hier dokumentiert.
 Das Projekt folgt [Semantic Versioning](https://semver.org/lang/de/) (MAJOR.MINOR.PATCH).
 
-## [Unreleased]
+## [1.8.0] - 2026-11-01
+
+### Geaendert
+- Detailansicht: nur noch ein Scrollbalken (der innere Scrollbereich der rechten Spalte entfaellt).
+
+### Hinzugefuegt
+- 3D-Ansicht: Ansichten-Leiste (ISO / Drauf / Vorne / Seite), Darstellung Solid / Gitter / Glanz, Materialfarbe umschaltbar (bei mehrfarbigen Modellen stattdessen Anzeige der erkannten Farben).
+- Druckbett ein-/ausblendbar mit Profilen (u.a. Kobra X 260x260x260, Kobra 3 Max 420x420x500) und Passt-Check (Drehung um 90 Grad erlaubt). Gewaehltes Profil wird im Browser gemerkt.
+- Detailansicht: Kostenkarte in der Seitenleiste mit Material, Infill und Preis pro kg. Eingetragene Filamentmenge (Slicer/manuell) hat Vorrang, sonst Schnellschaetzung: Huelle (Oberflaeche x Wandstaerke aus den Einstellungen) voll plus Infill im Restvolumen, x Dichte (Richtwert). Start-Infill kommt aus den Einstellungen, solange im Browser keiner gemerkt ist.
+- 3MF-Thumbnails: Ist ein Slicer-Vorschaubild eingebettet (Metadata/plate_1.png u.ae., Bambu/Orca/Prusa), wird es statt des Chromium-Renders verwendet (schneller, echte Farben). Zeigt die ganze Platte; fuer solche Dateien entsteht kein GLB-Cache (Viewer parst live). RENDER_VERSION = 4, Thumbnails werden einmalig neu erzeugt. Masse/Volumen/Dreiecke/Oberflaeche als Karten.
+- Inspiriert von STLDepot (Schello805, CC BY-NC 4.0) - nur Ideen/Bedienkonzept, kein Code uebernommen.
 
 ## [1.7.0] - 2026-10-21
 

@@ -39,7 +39,7 @@ const RENDERABLE_EXT = new Set(['stl', '3mf', 'obj']);
 // veraltet und wird automatisch neu erzeugt, auch wenn die Quelldatei selbst
 // unveraendert ist. So muss nach einem Render-Logik-Fix niemand manuell den
 // Cache leeren.
-const RENDER_VERSION = 3; // 1 = initial, 2 = Z-up->Y-up-Korrektur fuer STL/3MF (26.09.2026), 3 = 3MF-Loader: Objekt-IDs je Modell-Datei + p:path (mehrere Objekte lagen uebereinander, 08.10.2026)
+const RENDER_VERSION = 4; // 1 = initial, 2 = Z-up->Y-up-Korrektur fuer STL/3MF (26.09.2026), 3 = 3MF-Loader: Objekt-IDs je Modell-Datei + p:path (mehrere Objekte lagen uebereinander, 08.10.2026), 4 = 3MF: eingebettetes Slicer-Vorschaubild bevorzugt (01.11.2026)
 const MAX_CONCURRENT_RENDERS = 2;
 const FAILURE_COOLDOWN_MS = 10 * 60 * 1000; // 10 Minuten, bevor eine gescheiterte Datei erneut versucht wird
 const RENDER_TIMEOUT_MS = 45000; // Software-Rendering (SwiftShader) ist langsam, grosszuegig bemessen
@@ -195,9 +195,59 @@ const recentFailures = new Map(); // fileId -> Zeitstempel des letzten Fehlschla
 // Datei teilen sich denselben Render-Vorgang statt ihn doppelt zu starten.
 const inFlight = new Map(); // fileId -> Promise
 
+// ---- Eingebettetes Slicer-Vorschaubild (nur 3MF) ----
+// Bambu Studio / OrcaSlicer / PrusaSlicer legen beim Speichern ein fertig
+// gerendertes Bild mit in die 3MF (Metadata/plate_1.png o.ae.). Das ist
+// schneller (kein Chromium) und zeigt die echten Farben. Reihenfolge = Praeferenz.
+// Bewusst NICHT verwendet: pick_*.png (Farb-ID-Maske, kein Vorschaubild).
+// Nachteil: zeigt die ganze Platte (ggf. mehrere Objekte) und ignoriert die in
+// der App gesetzte Ausrichtung; ausserdem entsteht dabei kein GLB-Cache.
+const EMBEDDED_PREVIEW_NAMES = [
+  'metadata/plate_1.png',
+  'metadata/plate_no_light_1.png',
+  'metadata/top_1.png',
+  'metadata/plate_1_small.png',
+  'metadata/thumbnail.png',
+  'thumbnail/thumbnail.png',
+  'thumbnail.png',
+];
+const EMBEDDED_MAX_FILE_BYTES = 300 * 1024 * 1024; // adm-zip liest die ganze Datei in den RAM
+const EMBEDDED_MIN_PNG_BYTES = 1024; // winzige/leere Platzhalter ignorieren
+const PNG_MAGIC = Buffer.from([0x89, 0x50, 0x4e, 0x47]);
+
+function extractEmbeddedPreview(fileId, absPath, sizeBytes) {
+  if (!absPath) return null;
+  if (sizeBytes && sizeBytes > EMBEDDED_MAX_FILE_BYTES) return null;
+  try {
+    const AdmZip = require('adm-zip');
+    const zip = new AdmZip(absPath);
+    const byName = new Map();
+    for (const e of zip.getEntries()) {
+      if (!e.isDirectory) byName.set(e.entryName.replace(/\\/g, '/').toLowerCase(), e);
+    }
+    for (const name of EMBEDDED_PREVIEW_NAMES) {
+      const entry = byName.get(name);
+      if (!entry) continue;
+      const buf = entry.getData();
+      if (buf.length < EMBEDDED_MIN_PNG_BYTES || !buf.subarray(0, 4).equals(PNG_MAGIC)) continue;
+      const out = thumbnailPath(fileId);
+      fs.writeFileSync(out, buf);
+      return out;
+    }
+  } catch (err) {
+    console.error(`Eingebettetes Vorschaubild nicht lesbar fuer ${fileId} (Fallback auf Rendern):`, err.message);
+  }
+  return null;
+}
+
 async function generateThumbnail(fileId, ext, sizeBytes, opts = {}) {
   if (!isRenderable(ext)) return null;
   const background = !!opts.background;
+
+  if (ext === '3mf' && opts.absPath) {
+    const embedded = extractEmbeddedPreview(fileId, opts.absPath, sizeBytes);
+    if (embedded) return embedded;
+  }
 
   // Das Groessenlimit gilt nur fuer den Live-Fall (Nutzer wartet gerade
   // darauf). Hintergrund-Aufrufe (background: true) duerfen es versuchen,

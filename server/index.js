@@ -886,7 +886,9 @@ return res.redirect('/img/no-preview.svg');
 if (!filePath) {
 try {
 const orientation = parseOrientation(row.orientation_json);
-filePath = await thumbnails.generateThumbnail(req.params.id, row.ext, row.size_bytes, { orientation });
+let absPath = null;
+try { absPath = safeResolve(row.rel_path); } catch { /* ohne Pfad: nur Rendern */ }
+filePath = await thumbnails.generateThumbnail(req.params.id, row.ext, row.size_bytes, { orientation, absPath });
 } catch (err) {
 const sizeMb = (row.size_bytes / (1024 * 1024)).toFixed(1);
 console.error(`Thumbnail-Generierung fehlgeschlagen fuer "${row.rel_path}" (${sizeMb} MB, ${req.params.id}):`, err.message);
@@ -1035,7 +1037,10 @@ warmupProgress = { running: true, total: rows.length, done: 0, failed: 0 };
 // einzelnen Abschluss aktualisiert, nicht erst am Ende.
 await Promise.allSettled(
 rows.map((row) =>
-thumbnails.generateThumbnail(row.id, row.ext, row.size_bytes, { background: true })
+thumbnails.generateThumbnail(row.id, row.ext, row.size_bytes, {
+background: true,
+absPath: (() => { try { return safeResolve(row.rel_path); } catch { return null; } })(),
+})
 .then(() => {
 recordRenderSuccess(row.id, row.ext);
 warmupProgress.done++;

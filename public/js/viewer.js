@@ -52,6 +52,26 @@ const sectionPlane = new THREE.Plane(new THREE.Vector3(1, 0, 0), 0);
 let sectionOn = false;
 const raycaster = new THREE.Raycaster();
 
+// ---- Darstellung, Farbe, Ansichten, Druckbett (Inspiration: STLDepot, 01.11.2026) ----
+// Druckbett-Profile: x = Breite, z = Tiefe, h = maximale Bauhoehe (mm).
+// Kobra X (260x260x260) und Kobra 3 Max (420x420x500) laut Herstellerangaben;
+// die uebrigen Werte sind gaengige Herstellerangaben, aber nicht einzeln geprueft.
+export const BED_PRESETS = [
+  { id: 'kobra_x', name: 'Anycubic Kobra X', x: 260, z: 260, h: 260 },
+  { id: 'kobra_3_max', name: 'Anycubic Kobra 3 Max', x: 420, z: 420, h: 500 },
+  { id: 'bambu', name: 'Bambu Lab X1/P1/A1', x: 256, z: 256, h: 256 },
+  { id: 'prusa_mk4', name: 'Prusa MK4/MK3S+', x: 250, z: 210, h: 220 },
+  { id: 'ender_3', name: 'Creality Ender 3/K1', x: 220, z: 220, h: 250 },
+  { id: 'voron_300', name: 'Voron 2.4 (300 mm)', x: 300, z: 300, h: 300 },
+  { id: 'standard', name: 'Standard 250×250', x: 250, z: 250, h: 250 },
+];
+let shading = 'solid';          // 'solid' | 'wire' | 'gloss'
+let colorOverride = null;       // Hex-String oder null (= Originalfarben)
+const origMaterials = new Map(); // Mesh -> urspruengliches Material
+let bedGroup = null;
+let bedOn = false;
+let bedPreset = BED_PRESETS[0];
+
 function ensureScene() {
   if (renderer) return;
   scene = new THREE.Scene();
@@ -139,6 +159,11 @@ function clearCurrent() {
   clearMeasure();
   sectionOn = false;
   modelBox = null;
+  shading = 'solid';
+  colorOverride = null;
+  origMaterials.clear();
+  bedOn = false;
+  rebuildBed();
   if (currentMesh) {
     scene.remove(currentMesh);
     currentMesh = null;
@@ -225,7 +250,134 @@ function showViewerError(container, err) {
 
 function onModelReady() {
   modelBox = new THREE.Box3().setFromObject(currentMesh);
-  document.dispatchEvent(new CustomEvent('viewer-ready'));
+
+  // Urspruengliche Materialien merken + erkennen, ob das Modell mehrfarbig ist
+  // (dann ergibt eine einzelne Farbauswahl keinen Sinn).
+  origMaterials.clear();
+  const colors = new Set();
+  let multiColor = false;
+  for (const mesh of meshList()) {
+    origMaterials.set(mesh, mesh.material);
+    const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+    for (const m of mats) {
+      if (m.vertexColors || (mesh.geometry && mesh.geometry.hasAttribute('color'))) multiColor = true;
+      if (m.color) colors.add('#' + m.color.getHexString());
+    }
+  }
+  if (colors.size > 1) multiColor = true;
+
+  document.dispatchEvent(new CustomEvent('viewer-ready', { detail: { multiColor, colors: [...colors].slice(0, 8) } }));
+}
+
+// Material neu aufbauen aus Original + gewaehlter Darstellung/Farbe. Klone statt
+// Original zu aendern, damit "Solid + Originalfarben" jederzeit exakt zurueckkommt.
+function applyAppearance() {
+  for (const mesh of meshList()) {
+    const orig = origMaterials.get(mesh);
+    if (!orig) continue;
+    const origList = Array.isArray(orig) ? orig : [orig];
+    const prev = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+    for (const m of prev) if (!origList.includes(m)) m.dispose();
+
+    const next = origList.map((m) => {
+      if (shading === 'solid' && !colorOverride) return m;
+      const c = m.clone();
+      if (colorOverride && c.color) { c.color.set(colorOverride); c.vertexColors = false; }
+      if (shading === 'gloss' && c.isMeshStandardMaterial) { c.metalness = 0.85; c.roughness = 0.2; }
+      if (shading === 'wire') c.wireframe = true;
+      return c;
+    });
+    for (const m of next) {
+      m.clippingPlanes = sectionOn ? [sectionPlane] : [];
+      m.needsUpdate = true;
+    }
+    mesh.material = Array.isArray(orig) ? next : next[0];
+  }
+}
+
+export function setShading(mode) {
+  shading = ['solid', 'wire', 'gloss'].includes(mode) ? mode : 'solid';
+  applyAppearance();
+}
+
+// hex = '#rrggbb' oder null (Originalfarben)
+export function setModelColor(hex) {
+  colorOverride = hex || null;
+  applyAppearance();
+}
+
+export function setView(name) {
+  if (!currentMesh || !modelBox) return;
+  const size = modelBox.getSize(new THREE.Vector3());
+  const d = (Math.max(size.x, size.y, size.z) || 1) * 2;
+  const pos = {
+    iso: [d, d * 0.8, d],
+    top: [0, d * 1.6, 0.001],
+    front: [0, 0, d * 1.6],
+    side: [d * 1.6, 0, 0],
+  }[name] || [d, d * 0.8, d];
+  camera.position.set(pos[0], pos[1], pos[2]);
+  controls.target.set(0, 0, 0);
+  controls.update();
+}
+
+// ---- Druckbett + Passt-Check ----
+function rebuildBed() {
+  if (bedGroup) {
+    if (scene) scene.remove(bedGroup);
+    bedGroup.traverse((o) => { if (o.geometry) o.geometry.dispose(); if (o.material) o.material.dispose(); });
+    bedGroup = null;
+  }
+  if (!bedOn || !modelBox || !scene) return;
+
+  const w = bedPreset.x / unitScaleMm;
+  const dpt = bedPreset.z / unitScaleMm;
+  const size = modelBox.getSize(new THREE.Vector3());
+  const maxDim = Math.max(size.x, size.y, size.z) || 1;
+
+  const g = new THREE.Group();
+  const plane = new THREE.Mesh(
+    new THREE.PlaneGeometry(w, dpt),
+    new THREE.MeshBasicMaterial({ color: 0x1a2030, transparent: true, opacity: 0.55, side: THREE.DoubleSide, depthWrite: false }),
+  );
+  plane.rotation.x = -Math.PI / 2;
+  plane.position.y = -maxDim * 0.0005;
+  g.add(plane);
+
+  const pts = [];
+  const step = 10 / unitScaleMm; // 10-mm-Raster
+  for (let x = -w / 2; x <= w / 2 + 1e-6; x += step) pts.push(x, 0, -dpt / 2, x, 0, dpt / 2);
+  for (let z = -dpt / 2; z <= dpt / 2 + 1e-6; z += step) pts.push(-w / 2, 0, z, w / 2, 0, z);
+  const gridGeo = new THREE.BufferGeometry();
+  gridGeo.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
+  g.add(new THREE.LineSegments(gridGeo, new THREE.LineBasicMaterial({ color: 0x35456b, transparent: true, opacity: 0.7 })));
+
+  const border = new THREE.BufferGeometry().setFromPoints([
+    new THREE.Vector3(-w / 2, 0, -dpt / 2), new THREE.Vector3(w / 2, 0, -dpt / 2),
+    new THREE.Vector3(w / 2, 0, dpt / 2), new THREE.Vector3(-w / 2, 0, dpt / 2),
+  ]);
+  g.add(new THREE.LineLoop(border, new THREE.LineBasicMaterial({ color: 0x5b8ef5 })));
+
+  // Das Modell ist auf allen Achsen zentriert (frameObject) - Bett an die Unterkante legen.
+  g.position.y = modelBox.min.y;
+  scene.add(g);
+  bedGroup = g;
+}
+
+// Liefert Modellgroesse (mm) und ob sie aufs gewaehlte Bett passt (Drehung um 90 Grad erlaubt).
+export function getFit() {
+  if (!modelBox) return null;
+  const s = modelBox.getSize(new THREE.Vector3()).multiplyScalar(unitScaleMm);
+  const b = bedPreset;
+  const footprint = (s.x <= b.x && s.z <= b.z) || (s.z <= b.x && s.x <= b.z);
+  return { fits: footprint && s.y <= b.h, x: s.x, y: s.y, z: s.z, bed: b };
+}
+
+export function setBed({ on, presetId }) {
+  if (presetId) bedPreset = BED_PRESETS.find((p) => p.id === presetId) || bedPreset;
+  bedOn = !!on;
+  rebuildBed();
+  return getFit();
 }
 
 function meshList() {

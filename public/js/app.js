@@ -1,4 +1,4 @@
-import { loadIntoViewer, setUnitScale, setMeasureMode, clearMeasure, setSection } from './viewer.js';
+import { loadIntoViewer, setUnitScale, setMeasureMode, clearMeasure, setSection, setShading, setModelColor, setView, setBed, BED_PRESETS } from './viewer.js';
 import { t, getLang, setLang, applyStaticTranslations, localeTag, sortLocale } from './i18n.js';
 
 const gridEl = document.getElementById('grid');
@@ -504,6 +504,177 @@ posRange.addEventListener('input', applySection);
 flipCheck.addEventListener('change', applySection);
 }
 
+// ---- Viewer-Overlay: Ansichten, Druckbett + Passt-Check, Darstellung, Farbe ----
+// Liegt als Geschwister ueber #viewer-canvas-wrap (nicht darin), weil der Viewer
+// den Container beim Laden leert. Wird erst eingeblendet, wenn das Modell geladen ist.
+const COLOR_SWATCHES = ['#ff7a1a', '#38bdf8', '#22c55e', '#ef4444', '#a855f7', '#475569', '#f8fafc', '#eab308'];
+
+function viewerOverlayHtml() {
+const bedOpts = BED_PRESETS.map((p) => `<option value="${p.id}">${escapeHtml(p.name)} (${p.x}×${p.z})</option>`).join('');
+return `<div class="vo-layer" id="vo-layer" hidden>
+<div class="vo vo-views">${['iso', 'top', 'front', 'side'].map((v) => `<button type="button" class="vo-btn" data-view="${v}">${t('view.' + v)}</button>`).join('')}</div>
+<div class="vo vo-tr"><button type="button" class="vo-btn" id="vo-bed" title="${t('bed.title')}">▦ ${t('bed.btn')}</button></div>
+<div class="vo vo-info" id="vo-info" hidden>
+<div class="vo-dims" id="vo-dims"></div>
+<div class="vo-bedrow"><span>${t('bed.label')}</span><select id="vo-bed-select">${bedOpts}</select></div>
+<div class="vo-fit" id="vo-fit"></div>
+</div>
+<div class="vo vo-colors" id="vo-colors"></div>
+<div class="vo vo-shading">${['solid', 'wire', 'gloss'].map((m) => `<button type="button" class="vo-btn${m === 'solid' ? ' active' : ''}" data-shade="${m}">${t('shade.' + m)}</button>`).join('')}</div>
+</div>`;
+}
+
+function wireViewerOverlay() {
+const layer = document.getElementById('vo-layer');
+if (!layer) return;
+const bedBtn = document.getElementById('vo-bed');
+const bedSel = document.getElementById('vo-bed-select');
+const infoEl = document.getElementById('vo-info');
+const dimsEl = document.getElementById('vo-dims');
+const fitEl = document.getElementById('vo-fit');
+const colorsEl = document.getElementById('vo-colors');
+const fmt = (n) => n.toLocaleString(localeTag(), { maximumFractionDigits: 1 });
+
+const savedBed = localStorage.getItem('bedPreset');
+if (savedBed && BED_PRESETS.some((p) => p.id === savedBed)) bedSel.value = savedBed;
+
+let bedOn = false;
+function refreshBed() {
+const r = setBed({ on: bedOn, presetId: bedSel.value });
+bedBtn.classList.toggle('active', bedOn);
+infoEl.hidden = !bedOn;
+if (!bedOn || !r) return;
+dimsEl.textContent = `${fmt(r.x)} × ${fmt(r.z)} × ${fmt(r.y)} mm`;
+fitEl.className = 'vo-fit ' + (r.fits ? 'ok' : 'bad');
+fitEl.textContent = (r.fits ? '✓ ' : '⚠ ') + t(r.fits ? 'bed.fits' : 'bed.tooLarge', { bed: r.bed.name });
+}
+bedBtn.addEventListener('click', () => { bedOn = !bedOn; refreshBed(); });
+bedSel.addEventListener('change', () => { localStorage.setItem('bedPreset', bedSel.value); refreshBed(); });
+
+layer.querySelectorAll('[data-view]').forEach((b) => b.addEventListener('click', () => setView(b.dataset.view)));
+layer.querySelectorAll('[data-shade]').forEach((b) => b.addEventListener('click', () => {
+setShading(b.dataset.shade);
+layer.querySelectorAll('[data-shade]').forEach((x) => x.classList.toggle('active', x === b));
+}));
+
+document.addEventListener('viewer-ready', (ev) => {
+layer.hidden = false;
+const d = ev.detail || {};
+if (d.multiColor) {
+colorsEl.innerHTML = `<span class="vo-multi">${t('color.multi')}</span>` + (d.colors || []).map((c) => `<span class="vo-dot" style="background:${escapeAttr(c)}"></span>`).join('');
+return;
+}
+colorsEl.innerHTML = `<button type="button" class="vo-dot vo-dot-reset active" data-color="" title="${t('color.original')}">↺</button>`
++ COLOR_SWATCHES.map((c) => `<button type="button" class="vo-dot" data-color="${c}" style="background:${c}" title="${c}"></button>`).join('');
+colorsEl.querySelectorAll('[data-color]').forEach((b) => b.addEventListener('click', () => {
+setModelColor(b.dataset.color || null);
+colorsEl.querySelectorAll('[data-color]').forEach((x) => x.classList.toggle('active', x === b));
+}));
+}, { once: true });
+}
+
+// ---- Kosten-/Gewichtskarte (Seitenleiste) ----
+// Vorrang: eingetragene Filamentmenge (Slicer/manuell). Nur wenn keine vorliegt,
+// Schnellschaetzung aus Volumen x Dichte x Infill (Waende/Boden/Deckel NICHT
+// beruecksichtigt - Richtwert, siehe cost.hintQuick).
+const COST_MATERIALS = [
+{ id: 'PLA', density: 1.24, price: 20 },
+{ id: 'PETG', density: 1.27, price: 22 },
+{ id: 'ABS', density: 1.04, price: 23 },
+{ id: 'ASA', density: 1.07, price: 25 },
+{ id: 'TPU', density: 1.21, price: 30 },
+];
+
+function loadCostPrefs() {
+try { return JSON.parse(localStorage.getItem('costPrefs')) || {}; } catch { return {}; }
+}
+
+function costCardHtml() {
+return `<div class="cost-card" id="cost-card">
+<div class="cost-head"><span>${t('cost.title')}</span><span class="source-badge" id="cost-badge" hidden></span></div>
+<div class="cost-main"><span class="cost-price" id="cost-price">–</span><span class="cost-weight" id="cost-weight"></span></div>
+<div class="cost-controls">
+<label>${t('cost.material')}<select id="cost-material">${COST_MATERIALS.map((m) => `<option value="${m.id}">${m.id}</option>`).join('')}</select></label>
+<label>${t('cost.infill')}<input type="number" id="cost-infill" min="0" max="100" step="1" /></label>
+<label>${t('cost.pricePerKg')}<input type="number" id="cost-ppkg" min="0" step="0.5" /></label>
+</div>
+<p class="hint" id="cost-hint"></p>
+</div>`;
+}
+
+function wireCostCard(volCm3, surfCm2, wallMm, defaultInfillPct) {
+const matSel = document.getElementById('cost-material');
+const infillEl = document.getElementById('cost-infill');
+const ppkgEl = document.getElementById('cost-ppkg');
+const priceEl = document.getElementById('cost-price');
+const weightEl = document.getElementById('cost-weight');
+const badgeEl = document.getElementById('cost-badge');
+const hintEl = document.getElementById('cost-hint');
+if (!matSel) return;
+
+const prefs = loadCostPrefs();
+prefs.prices = prefs.prices || {};
+const savePrefs = () => { try { localStorage.setItem('costPrefs', JSON.stringify(prefs)); } catch { /* egal */ } };
+const priceFor = (id) => (Number(prefs.prices[id]) > 0 ? Number(prefs.prices[id]) : COST_MATERIALS.find((m) => m.id === id).price);
+
+matSel.value = COST_MATERIALS.some((m) => m.id === prefs.material) ? prefs.material : 'PLA';
+infillEl.value = Number.isFinite(prefs.infill) ? prefs.infill : (Number.isFinite(defaultInfillPct) ? defaultInfillPct : 20);
+ppkgEl.value = priceFor(matSel.value);
+
+function recalc() {
+const mat = COST_MATERIALS.find((m) => m.id === matSel.value);
+const infill = Math.min(100, Math.max(0, Number(infillEl.value) || 0));
+const ppkg = Number(ppkgEl.value) || 0;
+const entered = [...document.querySelectorAll('#filament-rows .filament-grams')].reduce((s, i) => s + (Number(i.value) || 0), 0);
+
+let grams = 0;
+let source = null;
+if (entered > 0) { grams = entered; source = 'filament'; }
+else if (volCm3 != null && volCm3 > 0) {
+// Huelle (Oberflaeche x Wandstaerke, hoechstens das ganze Volumen) voll, Rest mit Infill.
+const wallCm3 = surfCm2 != null && wallMm > 0 ? Math.min(surfCm2 * (wallMm / 10), volCm3) : 0;
+grams = mat.density * (wallCm3 + (infill / 100) * (volCm3 - wallCm3));
+source = 'quick';
+}
+
+if (!source) {
+priceEl.textContent = '–';
+weightEl.textContent = '';
+badgeEl.hidden = true;
+hintEl.textContent = t('cost.noGeometry');
+return;
+}
+const cost = (grams / 1000) * ppkg;
+priceEl.textContent = `${cost.toLocaleString(localeTag(), { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €`;
+weightEl.textContent = `~${grams.toLocaleString(localeTag(), { maximumFractionDigits: 1 })} g ${mat.id}`;
+badgeEl.hidden = false;
+badgeEl.textContent = t(source === 'filament' ? 'cost.badgeFilament' : 'cost.badgeQuick');
+badgeEl.className = 'source-badge ' + (source === 'filament' ? 'source-badge-slicer' : 'source-badge-estimate');
+hintEl.textContent = source === 'filament'
+? t('cost.hintFilament', { n: Math.round(grams * 10) / 10 })
+: (surfCm2 != null && wallMm > 0 ? t('cost.hintQuickWall', { w: wallMm }) : t('cost.hintQuick'));
+}
+
+matSel.addEventListener('change', () => {
+prefs.material = matSel.value;
+ppkgEl.value = priceFor(matSel.value);
+savePrefs();
+recalc();
+});
+infillEl.addEventListener('input', () => { const v = Number(infillEl.value); if (Number.isFinite(v)) { prefs.infill = v; savePrefs(); } recalc(); });
+ppkgEl.addEventListener('input', () => { const v = Number(ppkgEl.value); if (v > 0) { prefs.prices[matSel.value] = v; savePrefs(); } recalc(); });
+
+// Filament-Zeilen (Eingabe, Hinzufuegen, Entfernen) wirken sofort auf die Karte
+const rowsEl = document.getElementById('filament-rows');
+if (rowsEl) {
+rowsEl.addEventListener('input', recalc);
+rowsEl.addEventListener('click', () => setTimeout(recalc, 0));
+const addBtn = document.getElementById('btn-add-filament');
+if (addBtn) addBtn.addEventListener('click', () => setTimeout(recalc, 0));
+}
+recalc();
+}
+
 // ---- Einheit/Massstab: Pruefung, ob die Datei Millimeter-Angaben hat ----
 // 3MF nennt die Einheit im Modell (Standard mm), STL/OBJ nie - dort ist mm nur
 // eine Annahme. Ist sie unsicher oder die Groesse ungewoehnlich, kann hier die
@@ -568,14 +739,22 @@ const meta = f.embedded_meta;
 const ui = f.unit_info || { source: 'assumed', unit: null, declared_factor: 1, user_scale: null, scale_to_mm: 1, max_edge_mm: null, unusual: false };
 const sc = ui.scale_to_mm || 1; // Faktor Modelleinheit -> mm
 let geoRows = '';
+// Masse, Volumen, Dreiecke, Oberflaeche stehen als Karten oben in der Seitenleiste
+// (statCards); in der Tabelle bleiben nur die uebrigen Geometrie-Zeilen.
+const geoOk = !!(geo && !geo.error);
+const dimsMm = geoOk && geo.bbox ? [0, 1, 2].map(i => (geo.bbox.max[i] - geo.bbox.min[i]) * sc) : null;
+const volCm3 = geoOk && geo.volumeMm3Approx != null ? geo.volumeMm3Approx * sc ** 3 / 1000 : null;
+const surfCm2 = geoOk && geo.surfaceAreaMm2Approx != null ? geo.surfaceAreaMm2Approx * sc ** 2 / 100 : null;
+const f1 = (n) => n.toLocaleString(localeTag(), { maximumFractionDigits: 1 });
+const statCards = [
+dimsMm && [t('stat.width'), `${f1(dimsMm[0])} mm`],
+dimsMm && [t('stat.depth'), `${f1(dimsMm[1])} mm`],
+dimsMm && [t('stat.height'), `${f1(dimsMm[2])} mm`],
+volCm3 != null && [t('stat.volume'), `${f1(volCm3)} cm³`],
+geoOk && geo.triangles != null && [t('stat.triangles'), geo.triangles.toLocaleString(localeTag())],
+surfCm2 != null && [t('stat.surface'), `${f1(surfCm2)} cm²`],
+].filter(Boolean).map(([l, v]) => `<div class="stat-card"><span>${l}</span><strong>${v}</strong></div>`).join('');
 if (geo && !geo.error) {
-if (geo.bbox) {
-const size = [0, 1, 2].map(i => ((geo.bbox.max[i] - geo.bbox.min[i]) * sc).toFixed(1));
-geoRows += `<tr><td>${t('detail.dimensions')}</td><td>${size.join(' × ')} mm</td></tr>`;
-}
-if (geo.triangles != null) geoRows += `<tr><td>${t('detail.triangles')}</td><td>${geo.triangles.toLocaleString(localeTag())}</td></tr>`;
-if (geo.volumeMm3Approx != null) geoRows += `<tr><td>${t('detail.volume')}</td><td>${(geo.volumeMm3Approx * sc ** 3 / 1000).toFixed(2)} cm³</td></tr>`;
-if (geo.surfaceAreaMm2Approx != null) geoRows += `<tr><td>${t('detail.surfaceArea')}</td><td>${(geo.surfaceAreaMm2Approx * sc ** 2 / 100).toFixed(1)} cm²</td></tr>`;
 // OBJ liefert (noch) keine Dreieckszahl/kein Volumen, siehe parsers/obj.js
 if (geo.vertices != null) geoRows += `<tr><td>${t('detail.vertices')}</td><td>${geo.vertices.toLocaleString(localeTag())}</td></tr>`;
 if (geo.faces != null) geoRows += `<tr><td>${t('detail.faces')}</td><td>${geo.faces.toLocaleString(localeTag())}</td></tr>`;
@@ -637,7 +816,10 @@ detailEl.innerHTML = `
 </div>
 <div class="detail-grid">
 <div class="detail-main">
+<div class="viewer-shell">
 <div id="viewer-canvas-wrap"></div>
+${f.missing ? '' : viewerOverlayHtml()}
+</div>
 ${f.missing ? '' : viewerToolsHtml()}
 <table class="meta-table">
 <tr><td>${t('detail.path')}</td><td>${escapeHtml(f.rel_path)}${openLocalCell}</td></tr>
@@ -650,6 +832,8 @@ ${unitBoxHtml(ui, geo)}
 ${f.local_file_url ? `<div class="open-local-hint" id="open-local-hint" hidden>${t('detail.openLocalHintPointer')}</div>` : ''}
 </div>
 <div class="detail-side">
+${costCardHtml()}
+${statCards ? `<div class="stat-grid">${statCards}</div>` : ''}
 <form class="notes-form" id="notes-form">
 <label>${t('form.status')}
 <input name="status" value="${escapeAttr(f.status)}" placeholder="${t('form.statusPlaceholder')}" />
@@ -729,6 +913,12 @@ else delete row.dataset.spoolId;
 [...filamentRowsEl.querySelectorAll('.filament-row')].forEach(wireFilamentRow);
 updateFilamentTotal();
 document.getElementById('btn-add-filament').addEventListener('click', () => addFilamentRow());
+wireCostCard(
+volCm3,
+surfCm2,
+Number(settings && settings.estimate_wall_thickness_mm),
+settings && Number.isFinite(Number(settings.estimate_infill_fraction)) ? Math.round(Number(settings.estimate_infill_fraction) * 100) : undefined
+);
 
 const lagerBookBtn = document.getElementById('btn-lager-book');
 if (lagerBookBtn) {
@@ -943,6 +1133,7 @@ availBodyEl.innerHTML = `<div class="avail-overall avail-overall-${r.overall}">$
 }
 
 if (!f.missing) wireViewerTools(sc);
+if (!f.missing) wireViewerOverlay();
 if (!f.missing) loadIntoViewer('viewer-canvas-wrap', f.id, f.ext, f.size_bytes, f.mesh_version || 0);
 }
 

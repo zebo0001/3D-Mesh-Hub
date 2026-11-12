@@ -14,6 +14,8 @@ Endpunkte:
   GET  /jobs/{id}       -> {ok, state: queued|running|done|error, report?, error?}
   GET  /jobs/{id}/result  -> reparierte STL (binaer)
 """
+import json
+import multiprocessing
 import os
 import tempfile
 import threading
@@ -145,31 +147,86 @@ def repair_mesh(path, progress=None):
     return result, report
 
 
-def _run_job(job_id, src_path, ext):
-    job = _jobs[job_id]
-    job["state"] = "running"
-    started = time.time()
-
+def _child_main(src_path, out_path, progress_path, report_path):
+    """Laeuft in einem eigenen Prozess. pymeshfix ist C++ und gibt die Python-GIL
+    nicht frei; in einem Thread wuerde es den Webserver waehrend der Reparatur
+    komplett blockieren (Status-Abfragen laufen dann in ein Timeout)."""
     def progress(msg):
-        job["progress"] = msg
+        try:
+            with open(progress_path, "w", encoding="utf-8") as fh:
+                fh.write(msg)
+        except OSError:
+            pass
 
+    started = time.time()
     try:
         mesh, report = repair_mesh(src_path, progress)
         progress("Schreibe Ergebnis")
-        out_path = src_path + "_repariert.stl"
         mesh.export(out_path, file_type="stl")
         report["seconds"] = round(time.time() - started, 1)
-        job["report"] = report
-        job["result_path"] = out_path
-        job["state"] = "done"
+        payload = {"ok": True, "report": report}
     except Exception as exc:  # Fehlertext an den Hub durchreichen
+        payload = {"ok": False, "error": str(exc) or exc.__class__.__name__}
+    with open(report_path, "w", encoding="utf-8") as fh:
+        json.dump(payload, fh)
+
+
+def _read_text(path):
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            return fh.read()
+    except OSError:
+        return None
+
+
+def _run_job(job_id, src_path, ext):
+    """Ueberwacht den Reparatur-Prozess (leichter Thread, haelt die GIL nicht)."""
+    job = _jobs[job_id]
+    job["state"] = "running"
+    out_path = src_path + "_repariert.stl"
+    progress_path = src_path + ".progress"
+    report_path = src_path + ".report.json"
+    try:
+        ctx = multiprocessing.get_context("spawn")
+        proc = ctx.Process(target=_child_main, args=(src_path, out_path, progress_path, report_path), daemon=True)
+        proc.start()
+        while proc.is_alive():
+            msg = _read_text(progress_path)
+            if msg:
+                job["progress"] = msg
+            proc.join(timeout=0.5)
+        proc.join()
+
+        raw = _read_text(report_path)
+        if raw is None:
+            job["error"] = (
+                f"Reparatur-Prozess unerwartet beendet (Exit-Code {proc.exitcode}); "
+                "vermutlich zu wenig Arbeitsspeicher fuer diese Datei"
+            )
+            job["state"] = "error"
+        else:
+            payload = json.loads(raw)
+            if payload.get("ok"):
+                job["report"] = payload["report"]
+                job["result_path"] = out_path
+                job["state"] = "done"
+            else:
+                job["error"] = payload.get("error") or "Unbekannter Fehler"
+                job["state"] = "error"
+    except Exception as exc:
         job["error"] = str(exc) or exc.__class__.__name__
         job["state"] = "error"
     finally:
-        try:
-            os.remove(src_path)
-        except OSError:
-            pass
+        for path in (src_path, progress_path, report_path):
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+        if job.get("state") != "done":
+            try:
+                os.remove(out_path)
+            except OSError:
+                pass
         job["finished"] = time.time()
 
 

@@ -500,7 +500,14 @@ mmEl.textContent = r && secCheck.checked
 };
 secCheck.addEventListener('change', applySection);
 axisSel.addEventListener('change', applySection);
-posRange.addEventListener('input', applySection);
+// Beim Ziehen hoechstens einmal pro Bild anwenden (Ereignisse werden gebuendelt,
+// sonst laufen sie bei grossen Modellen hinter der Darstellung her).
+let secFrame = 0;
+posRange.addEventListener('input', () => {
+if (secFrame) return;
+secFrame = requestAnimationFrame(() => { secFrame = 0; applySection(); });
+});
+posRange.addEventListener('change', applySection);
 flipCheck.addEventListener('change', applySection);
 }
 

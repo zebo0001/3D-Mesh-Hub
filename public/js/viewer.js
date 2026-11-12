@@ -470,8 +470,14 @@ export function setSection({ on, axis = 'y', pos = 0.5, flip = false }) {
   for (const mesh of meshList()) {
     const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
     for (const m of mats) {
-      m.clippingPlanes = sectionOn ? [sectionPlane] : [];
-      m.needsUpdate = true;
+      // Shader nur beim Ein-/Ausschalten neu bauen. Beim Verschieben aendert sich nur
+      // die (geteilte) Plane; ein needsUpdate pro Schritt kompiliert den Shader jedes
+      // Mal neu und laesst grosse Modelle ruckeln.
+      const has = !!(m.clippingPlanes && m.clippingPlanes.length);
+      if (has !== sectionOn) {
+        m.clippingPlanes = sectionOn ? [sectionPlane] : [];
+        m.needsUpdate = true;
+      }
     }
     const existing = mesh.children.find((c) => c.userData.cap);
     if (sectionOn && !existing) {

@@ -3,6 +3,12 @@
 Alle nennenswerten Aenderungen an 3D Mesh Hub werden hier dokumentiert.
 Das Projekt folgt [Semantic Versioning](https://semver.org/lang/de/) (MAJOR.MINOR.PATCH).
 
+## [1.9.1] - 2026-11-13
+
+### Behoben
+- Mesh-Reparatur: Der Mesh-Dienst blockierte waehrend der Reparatur (die C++-Reparatur haelt die Python-GIL) und der Hub brach mit "This operation was aborted" ab. Die Reparatur laeuft jetzt in einem eigenen Prozess, der Status antwortet jederzeit; einzelne Aussetzer beim Abfragen beenden den Job nicht mehr.
+- Schnittebene: Beim Verschieben des Reglers wurde bei jedem Schritt der Shader neu kompiliert (Zittern, Springen bei grossen Modellen). Das passiert nur noch beim Ein-/Ausschalten, Regler-Ereignisse werden pro Bild gebuendelt.
+
 ## [1.9.0] - 2026-11-12
 
 ### Hinzugefuegt

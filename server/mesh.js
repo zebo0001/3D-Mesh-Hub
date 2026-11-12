@@ -16,6 +16,7 @@ const REPAIR_DIR = path.join(path.dirname(DB_PATH), 'repaired');
 const SUPPORTED_EXT = new Set(['.stl', '.obj']);
 const HEALTH_TIMEOUT_MS = 2500;
 const START_TIMEOUT_MS = 10 * 60 * 1000; // Upload grosser Dateien
+const MAX_POLL_FAILURES = 10; // x 3 s Abfrageintervall der Oberflaeche
 
 // Datei-IDs sind sha1-Hashes (siehe db.js); alles andere nie in einen Pfad lassen.
 const ID_RE = /^[a-f0-9]{40}$/;
@@ -138,8 +139,17 @@ function register(app, { db, safeResolve }) {
           activeJobs.delete(row.id);
         }
       } catch (err) {
-        return res.status(502).json({ ok: false, state: 'error', error: `Statusabfrage fehlgeschlagen: ${(err && err.message) || err}` });
+        // Einzelner Aussetzer (Timeout, kurzer Verbindungsabbruch): Job laeuft weiter,
+        // die Oberflaeche fragt in ein paar Sekunden erneut. Erst nach mehreren
+        // Fehlversuchen in Folge gilt der Dienst als nicht erreichbar.
+        job.pollFailures = (job.pollFailures || 0) + 1;
+        if (job.pollFailures >= MAX_POLL_FAILURES) {
+          activeJobs.delete(row.id);
+          return res.status(502).json({ ok: false, state: 'error', error: `Mesh-Dienst antwortet nicht mehr: ${(err && err.message) || err}` });
+        }
+        return res.json({ ok: true, state: job.state, progress: job.progress });
       }
+      job.pollFailures = 0;
     }
 
     const current = activeJobs.get(row.id);

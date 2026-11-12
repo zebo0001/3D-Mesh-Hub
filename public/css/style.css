@@ -442,7 +442,12 @@ display: flex; flex-direction: column; gap: 0.2rem; font-size: 0.78rem; color: v
 #vt-section-controls { display: inline-flex; align-items: center; gap: 0.5rem; }
 #vt-section-controls[hidden] { display: none; }
 #vt-axis { background: var(--panel-2); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 0.15rem 0.3rem; }
-#vt-pos { width: 9rem; }
+#vt-pos { width: 9rem; flex: none; }
+/* Feste Breite + gleich breite Ziffern: Der Text aendert beim Ziehen sonst seine
+   Laenge, die Leiste bricht um, das Layout springt und der Regler laeuft unter
+   dem Mauszeiger weg (Wert springt auf 100 %). */
+#vt-section-mm { display: inline-block; min-width: 17ch; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.viewer-tools { min-height: 2.2rem; }
 .measure-label {
   position: absolute; left: 0.6rem; bottom: 3.2rem; z-index: 2; padding: 0.3rem 0.65rem; border-radius: 8px;
   background: rgba(13,15,21,0.8); color: #ffe14a; font-size: 0.82rem; font-weight: 600; pointer-events: none;
@@ -528,4 +533,5 @@ display: flex; flex-direction: column; gap: 0.2rem; font-size: 0.78rem; color: v
 .mesh-result.warn::before { content: '\26A0 '; color: var(--warn); }
 .mesh-warn { color: var(--warn); font-size: 0.82rem; margin: 0.25rem 0; }
 .mesh-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; margin: 0.5rem 0; }
-.mesh-actions a.btn-secondary { text-decoration: none; display: inline-block; }
+.mesh-actions .btn-secondary { background: var(--panel-2); color: var(--text); border: 1px solid var(--border); border-radius: 8px; padding: 0.3rem 0.7rem; cursor: pointer; font-family: inherit; font-size: 0.85rem; text-decoration: none; display: inline-block; }
+.mesh-actions .btn-secondary:hover { border-color: var(--accent); }

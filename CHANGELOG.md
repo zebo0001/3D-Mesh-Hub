@@ -6,6 +6,8 @@ Das Projekt folgt [Semantic Versioning](https://semver.org/lang/de/) (MAJOR.MINO
 ## [1.9.1] - 2026-11-13
 
 ### Behoben
+- Schnittebene: Die Positionsanzeige hat jetzt feste Breite. Vorher aenderte sich ihre Laenge beim Ziehen, die Werkzeugleiste brach um, das Layout sprang und der Regler wanderte unter dem Mauszeiger weg (Zittern, Sprung auf 100 %).
+- Mesh-Box: Knoepfe und Download-Link sind jetzt gestaltet.
 - Mesh-Reparatur: Der Mesh-Dienst blockierte waehrend der Reparatur (die C++-Reparatur haelt die Python-GIL) und der Hub brach mit "This operation was aborted" ab. Die Reparatur laeuft jetzt in einem eigenen Prozess, der Status antwortet jederzeit; einzelne Aussetzer beim Abfragen beenden den Job nicht mehr.
 - Schnittebene: Beim Verschieben des Reglers wurde bei jedem Schritt der Shader neu kompiliert (Zittern, Springen bei grossen Modellen). Das passiert nur noch beim Ein-/Ausschalten, Regler-Ereignisse werden pro Bild gebuendelt.
 

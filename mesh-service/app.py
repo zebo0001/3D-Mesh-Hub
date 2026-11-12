@@ -1,0 +1,235 @@
+"""3D Mesh Hub - Mesh-Dienst (Stufe 1: Reparatur).
+
+Interner Helfer-Container, nur ueber docker-compose.mesh.yml aktiviert und
+nicht nach aussen veroeffentlicht. Nimmt ein Modell (STL/OBJ) entgegen,
+repariert es in einem Hintergrundjob und liefert Bericht + reparierte Datei.
+
+Die Originaldatei wird nie veraendert: Der Dienst sieht nur eine Kopie, die
+der Hub per HTTP schickt, und gibt das Ergebnis als neue STL zurueck.
+
+Endpunkte:
+  GET  /health
+  POST /jobs            multipart: model (Datei), modelFilename (optional)
+                        -> {ok, job_id}
+  GET  /jobs/{id}       -> {ok, state: queued|running|done|error, report?, error?}
+  GET  /jobs/{id}/result  -> reparierte STL (binaer)
+"""
+import os
+import tempfile
+import threading
+import time
+import uuid
+
+import numpy as np
+import pymeshfix
+import trimesh
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi.responses import FileResponse, JSONResponse
+
+SERVICE_NAME = "3d-mesh-hub-mesh-service"
+# Obergrenze fuer die Eingabe (Dreiecke). Schuetzt vor Speicherueberlauf; die
+# Testdatei mit 828 000 Dreiecken lief problemlos.
+MAX_FACES = int(os.environ.get("MAX_FACES", "5000000"))
+# Fertige Jobs werden nach dieser Zeit samt Ergebnisdatei geloescht.
+JOB_TTL_SECONDS = int(os.environ.get("JOB_TTL_SECONDS", "3600"))
+# Splitter: Komponenten mit weniger Dreiecken UND winziger Ausdehnung werden entfernt.
+FRAGMENT_MAX_FACES = int(os.environ.get("FRAGMENT_MAX_FACES", "100"))
+FRAGMENT_MAX_DIAG_FRACTION = float(os.environ.get("FRAGMENT_MAX_DIAG_FRACTION", "0.01"))
+# Abweichung des Volumens, ab der ein Warnhinweis erscheint.
+VOLUME_WARN_FRACTION = 0.02
+
+SUPPORTED_EXT = {".stl", ".obj"}
+
+app = FastAPI(title=SERVICE_NAME)
+
+_jobs = {}
+_jobs_lock = threading.Lock()
+
+
+def _edge_stats(mesh):
+    """Offene Kanten (nur 1 Flaeche) und nicht-manifold Kanten (>2 Flaechen)."""
+    edges = mesh.edges_sorted
+    if len(edges) == 0:
+        return 0, 0
+    _, counts = np.unique(edges, axis=0, return_counts=True)
+    return int((counts == 1).sum()), int((counts > 2).sum())
+
+
+def _describe(mesh):
+    open_edges, nonmanifold = _edge_stats(mesh)
+    try:
+        volume = float(mesh.volume)
+    except Exception:
+        volume = None
+    return {
+        "faces": int(len(mesh.faces)),
+        "vertices": int(len(mesh.vertices)),
+        "watertight": bool(mesh.is_watertight),
+        "open_edges": open_edges,
+        "nonmanifold_edges": nonmanifold,
+        "volume_mm3": volume,
+        "extents_mm": [round(float(x), 3) for x in mesh.extents],
+    }
+
+
+def _split_components(mesh):
+    return mesh.split(only_watertight=False)
+
+
+def _repair_one(component):
+    """pymeshfix auf einer einzelnen Komponente. Gibt ein neues Trimesh zurueck."""
+    fixer = pymeshfix.MeshFix(np.asarray(component.vertices), np.asarray(component.faces))
+    fixer.repair()
+    return trimesh.Trimesh(np.asarray(fixer.points), np.asarray(fixer.faces), process=True)
+
+
+def repair_mesh(path, progress=None):
+    """Laedt, bereinigt und repariert. Gibt (reparierte Trimesh, Bericht) zurueck."""
+    def say(msg):
+        if progress:
+            progress(msg)
+
+    say("Lade Datei")
+    loaded = trimesh.load(path, force="mesh", process=True)
+    if not isinstance(loaded, trimesh.Trimesh) or len(loaded.faces) == 0:
+        raise ValueError("Die Datei enthaelt kein lesbares Dreiecksnetz")
+    if len(loaded.faces) > MAX_FACES:
+        raise ValueError(f"Zu viele Dreiecke ({len(loaded.faces)}), Limit {MAX_FACES}")
+
+    before = _describe(loaded)
+    say("Analysiere Komponenten")
+    components = _split_components(loaded)
+    before["components"] = len(components)
+
+    diag = float(np.linalg.norm(loaded.extents)) or 1.0
+    kept, removed = [], 0
+    for c in components:
+        tiny = len(c.faces) < FRAGMENT_MAX_FACES and float(np.linalg.norm(c.extents)) < diag * FRAGMENT_MAX_DIAG_FRACTION
+        if tiny and len(components) > 1:
+            removed += 1
+        else:
+            kept.append(c)
+    if not kept:  # Sicherheitsnetz: nie alles wegwerfen
+        kept = [max(components, key=lambda c: len(c.faces))]
+
+    repaired_parts, still_open = [], 0
+    for i, c in enumerate(kept, 1):
+        say(f"Repariere Teil {i} von {len(kept)}")
+        if c.is_watertight and c.is_winding_consistent:
+            repaired_parts.append(c)
+            continue
+        fixed = _repair_one(c)
+        if not fixed.is_watertight:
+            still_open += 1
+        repaired_parts.append(fixed)
+
+    result = repaired_parts[0] if len(repaired_parts) == 1 else trimesh.util.concatenate(repaired_parts)
+    after = _describe(result)
+    after["components"] = len(repaired_parts)
+
+    warnings = []
+    if after["volume_mm3"] and before["volume_mm3"]:
+        diff = abs(after["volume_mm3"] - before["volume_mm3"]) / max(abs(before["volume_mm3"]), 1.0)
+        if diff > VOLUME_WARN_FRACTION:
+            warnings.append(f"Volumen hat sich um {diff * 100:.1f} % geaendert - Ergebnis pruefen")
+    if still_open:
+        warnings.append(f"{still_open} Teil(e) blieben nach der Reparatur offen")
+
+    report = {
+        "before": before,
+        "after": after,
+        "removed_fragments": removed,
+        "warnings": warnings,
+        "ok_watertight": bool(after["watertight"]),
+    }
+    return result, report
+
+
+def _run_job(job_id, src_path, ext):
+    job = _jobs[job_id]
+    job["state"] = "running"
+    started = time.time()
+
+    def progress(msg):
+        job["progress"] = msg
+
+    try:
+        mesh, report = repair_mesh(src_path, progress)
+        progress("Schreibe Ergebnis")
+        out_path = src_path + "_repariert.stl"
+        mesh.export(out_path, file_type="stl")
+        report["seconds"] = round(time.time() - started, 1)
+        job["report"] = report
+        job["result_path"] = out_path
+        job["state"] = "done"
+    except Exception as exc:  # Fehlertext an den Hub durchreichen
+        job["error"] = str(exc) or exc.__class__.__name__
+        job["state"] = "error"
+    finally:
+        try:
+            os.remove(src_path)
+        except OSError:
+            pass
+        job["finished"] = time.time()
+
+
+def _cleanup_old_jobs():
+    now = time.time()
+    with _jobs_lock:
+        for jid in [j for j, v in _jobs.items() if v.get("finished") and now - v["finished"] > JOB_TTL_SECONDS]:
+            path = _jobs[jid].get("result_path")
+            if path:
+                try:
+                    os.remove(path)
+                except OSError:
+                    pass
+            del _jobs[jid]
+
+
+@app.get("/health")
+def health():
+    return {"ok": True, "service": SERVICE_NAME}
+
+
+@app.post("/jobs")
+async def create_job(model: UploadFile = File(...), modelFilename: str = Form(default="")):
+    _cleanup_old_jobs()
+    name = modelFilename or model.filename or "model.stl"
+    ext = os.path.splitext(name)[1].lower()
+    if ext not in SUPPORTED_EXT:
+        return JSONResponse(
+            status_code=400,
+            content={"ok": False, "error": f"Format {ext or '?'} wird in dieser Stufe nicht unterstuetzt (STL und OBJ)"},
+        )
+    fd, tmp_path = tempfile.mkstemp(suffix=ext, prefix="mesh_")
+    with os.fdopen(fd, "wb") as fh:
+        while True:
+            chunk = await model.read(1024 * 1024)
+            if not chunk:
+                break
+            fh.write(chunk)
+    job_id = uuid.uuid4().hex
+    _jobs[job_id] = {"state": "queued", "created": time.time(), "progress": "In Warteschlange", "filename": name}
+    threading.Thread(target=_run_job, args=(job_id, tmp_path, ext), daemon=True).start()
+    return {"ok": True, "job_id": job_id}
+
+
+@app.get("/jobs/{job_id}")
+def job_status(job_id: str):
+    job = _jobs.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job unbekannt oder abgelaufen")
+    body = {"ok": True, "state": job["state"], "progress": job.get("progress")}
+    if job["state"] == "done":
+        body["report"] = job["report"]
+    if job["state"] == "error":
+        body["error"] = job.get("error")
+    return body
+
+
+@app.get("/jobs/{job_id}/result")
+def job_result(job_id: str):
+    job = _jobs.get(job_id)
+    if not job or job.get("state") != "done":
+        raise HTTPException(status_code=404, detail="Ergebnis nicht verfuegbar")
+    return FileResponse(job["result_path"], media_type="model/stl", filename="repariert.stl")

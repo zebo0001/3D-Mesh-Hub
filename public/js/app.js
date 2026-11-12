@@ -705,6 +705,92 @@ ${ui.user_scale != null ? `<button type="button" class="btn-secondary" id="unit-
 return `<div class="unit-box ${cls}" id="unit-box"><div class="unit-status">${escapeHtml(text)}</div>${form}</div>`;
 }
 
+// ---- Mesh-Werkzeuge: Reparatur (optionaler Mesh-Dienst) ----
+function meshBoxHtml() {
+return `<div class="avail-box mesh-box" id="mesh-box" hidden><h3>${t('mesh.title')}</h3><div id="mesh-body"></div></div>`;
+}
+
+async function bindMeshBox(f) {
+const box = document.getElementById('mesh-box');
+const body = document.getElementById('mesh-body');
+if (!box || !body) return;
+let status;
+try { status = await api('/api/mesh/status'); } catch { return; }
+if (!status.enabled) return; // Funktion bleibt ausgeblendet
+box.hidden = false;
+
+const n = (v) => (v == null ? '–' : Number(v).toLocaleString(localeTag()));
+const yesNo = (b) => (b ? t('mesh.yes') : t('mesh.no'));
+const cm3 = (mm3) => (mm3 == null ? '–' : (Math.round(mm3 / 100) / 10).toLocaleString(localeTag()));
+const alive = () => document.body.contains(box);
+
+const reportHtml = (r, url) => {
+const b = r.before || {};
+const a = r.after || {};
+const row = (label, bv, av) => `<tr><td>${label}</td><td>${bv}</td><td>${av}</td></tr>`;
+const warns = (r.warnings || []).map((w) => `<div class="mesh-warn">${escapeHtml(w)}</div>`).join('');
+const cls = a.watertight ? 'ok' : 'warn';
+return `<div class="mesh-result ${cls}">${a.watertight ? t('mesh.resultOk') : t('mesh.resultOpen')}</div>
+<table class="mesh-table"><tr><th></th><th>${t('mesh.before')}</th><th>${t('mesh.after')}</th></tr>
+${row(t('mesh.watertight'), yesNo(b.watertight), yesNo(a.watertight))}
+${row(t('mesh.faces'), n(b.faces), n(a.faces))}
+${row(t('mesh.openEdges'), n(b.open_edges), n(a.open_edges))}
+${row(t('mesh.nonManifold'), n(b.nonmanifold_edges), n(a.nonmanifold_edges))}
+${row(t('mesh.components'), n(b.components), n(a.components))}
+${row(t('mesh.volume'), cm3(b.volume_mm3), cm3(a.volume_mm3))}
+</table>
+${r.removed_fragments ? `<div class="hint">${t('mesh.fragments', { n: r.removed_fragments })}</div>` : ''}
+${warns}
+<div class="mesh-actions"><a class="btn-secondary" href="${url}" download>${t('mesh.download')}</a>
+<button type="button" class="btn-secondary" id="mesh-repair-btn">${t('mesh.again')}</button></div>
+<div class="hint">${t('mesh.originalUntouched')}</div>`;
+};
+
+let timer = null;
+const stopTimer = () => { if (timer) { clearTimeout(timer); timer = null; } };
+
+const render = (st) => {
+if (!alive()) { stopTimer(); return; }
+let html;
+if (!status.online) {
+html = `<div class="hint">${t('mesh.offline')}</div>`;
+} else if (st.state === 'queued' || st.state === 'running') {
+html = `<div class="hint">${t('mesh.running')}${st.progress ? ' – ' + escapeHtml(st.progress) : ''}</div>`;
+} else if (st.state === 'done') {
+html = reportHtml(st.report || {}, st.download_url);
+} else {
+const err = st.state === 'error' ? `<div class="mesh-warn">${escapeHtml(st.error || t('mesh.error'))}</div>` : '';
+html = `${err}<div class="hint">${t('mesh.intro')}</div>
+<div class="mesh-actions"><button type="button" class="btn-secondary" id="mesh-repair-btn">${t('mesh.repairBtn')}</button></div>`;
+}
+body.innerHTML = html;
+const btn = document.getElementById('mesh-repair-btn');
+if (btn) btn.addEventListener('click', start);
+};
+
+const poll = async () => {
+stopTimer();
+if (!alive()) return;
+let st;
+try { st = await api(`/api/files/${f.id}/repair`); } catch (e) { st = { state: 'error', error: e.message }; }
+render(st);
+if (st.state === 'queued' || st.state === 'running') timer = setTimeout(poll, 3000);
+};
+
+const start = async () => {
+render({ state: 'queued', progress: t('mesh.uploading') });
+try {
+await api(`/api/files/${f.id}/repair`, { method: 'POST' });
+} catch (e) {
+render({ state: 'error', error: e.message });
+return;
+}
+poll();
+};
+
+poll();
+}
+
 // ---- Detail-Overlay ----
 async function openDetail(id, opts = {}) {
 const f = await api(`/api/files/${id}`);
@@ -829,6 +915,7 @@ ${geoRows}
 ${metaRows}
 </table>
 ${unitBoxHtml(ui, geo)}
+${f.ext === 'stl' || f.ext === 'obj' ? meshBoxHtml() : ''}
 ${f.local_file_url ? `<div class="open-local-hint" id="open-local-hint" hidden>${t('detail.openLocalHintPointer')}</div>` : ''}
 </div>
 <div class="detail-side">
@@ -1085,6 +1172,8 @@ refreshEstimate();
 }
 
 // Druckhistorie (Idee 3, Stufe 1): wie oft gedruckt, reales Filament, zuletzt wann.
+bindMeshBox(f);
+
 const histBoxEl = document.getElementById('hist-box');
 if (histBoxEl) {
 api(`/api/files/${f.id}/prints`).then((r) => {

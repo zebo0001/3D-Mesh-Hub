@@ -7,6 +7,7 @@ const thumbnails = require('./thumbnails');
 const { estimateScaledFilament } = require('./estimate');
 const { checkAvailability } = require('./availability');
 const { matchPrints, summarize } = require('./printmatch');
+const meshTools = require('./mesh');
 
 // ---- "Datei am PC oeffnen"-Link (file://) ----
 // HOST_DATA_ROOT ist der ECHTE Pfad auf dem Host-Rechner (aus .env DATA_ROOT),
@@ -45,6 +46,9 @@ const app = express();
 // ---- Versions-Endpoint (siehe package.json version) ----
 const APP_VERSION = require('../package.json').version;
 app.get('/api/version', (req, res) => res.json({ version: APP_VERSION }));
+
+// ---- Mesh-Werkzeuge (optionaler Mesh-Dienst, siehe docker-compose.mesh.yml) ----
+meshTools.register(app, { db, safeResolve });
 app.use(express.json());
 app.use(express.static(path.join(__dirname, '..', 'public')));
 

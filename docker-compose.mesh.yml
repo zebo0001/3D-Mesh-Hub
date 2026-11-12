@@ -1,0 +1,25 @@
+# Mesh-Werkzeuge (opt-in): Reparatur defekter Modelle (Stufe 1), spaeter
+# Schnittwerkzeug. Fuegt einen internen Python-Container hinzu, der Modelle
+# mit trimesh/pymeshfix/manifold3d bearbeitet.
+#
+# Nutzung (zusaetzlich zur normalen docker-compose.yml, nicht stattdessen):
+#   docker compose -f docker-compose.yml -f docker-compose.mesh.yml up --build -d
+# Mit dem Slicer-Dienst zusammen:
+#   docker compose -f docker-compose.yml -f docker-compose.slicer.yml -f docker-compose.mesh.yml up --build -d
+#
+# Die Originaldatei wird nie veraendert: Der Hub schickt eine Kopie an den
+# Mesh-Dienst und legt das Ergebnis als neue Datei im App-Datenvolumen ab
+# (Download in der Detailansicht). Der Mesh-Container ist NICHT nach aussen
+# veroeffentlicht (kein "ports:"), nur ueber das interne Docker-Netzwerk
+# erreichbar.
+services:
+  3d-mesh-hub:
+    environment:
+      - MESH_SERVICE_URL=http://mesh-service:4002
+
+  mesh-service:
+    build: ./mesh-service
+    container_name: 3d-mesh-hub-mesh
+    restart: unless-stopped
+    # Grosse Modelle (mehrere 100 000 Dreiecke) brauchen RAM. Bei Bedarf hier
+    # ein Limit setzen, z. B. mem_limit: 4g

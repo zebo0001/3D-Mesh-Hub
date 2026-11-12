@@ -518,3 +518,14 @@ display: flex; flex-direction: column; gap: 0.2rem; font-size: 0.78rem; color: v
 }
 .stat-card span { font-size: 0.65rem; color: var(--muted); }
 .stat-card strong { font-size: 0.85rem; font-family: ui-monospace, Consolas, monospace; }
+
+/* Mesh-Werkzeuge (Reparatur) */
+.mesh-table { width: 100%; border-collapse: collapse; margin: 0.5rem 0; font-size: 0.82rem; }
+.mesh-table th, .mesh-table td { text-align: right; padding: 0.2rem 0.4rem; border-bottom: 1px solid rgba(255,255,255,0.08); }
+.mesh-table th:first-child, .mesh-table td:first-child { text-align: left; color: var(--muted); }
+.mesh-result { font-size: 0.85rem; margin-bottom: 0.25rem; }
+.mesh-result.ok::before { content: '\2713 '; color: var(--accent-cyan); }
+.mesh-result.warn::before { content: '\26A0 '; color: var(--warn); }
+.mesh-warn { color: var(--warn); font-size: 0.82rem; margin: 0.25rem 0; }
+.mesh-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; margin: 0.5rem 0; }
+.mesh-actions a.btn-secondary { text-decoration: none; display: inline-block; }

@@ -3,6 +3,12 @@
 Alle nennenswerten Aenderungen an 3D Mesh Hub werden hier dokumentiert.
 Das Projekt folgt [Semantic Versioning](https://semver.org/lang/de/) (MAJOR.MINOR.PATCH).
 
+## [1.9.0] - 2026-11-12
+
+### Hinzugefuegt
+- Mesh-Reparatur fuer STL und OBJ: In der Detailansicht prueft und repariert ein optionaler Python-Dienst (`mesh-service`) Loecher, fehlerhafte Kanten und winzige Splitter und legt eine reparierte Kopie ab. Vorher/Nachher-Bericht (geschlossen, Dreiecke, offene Kanten, Volumen), Download der reparierten STL. Die Originaldatei bleibt unveraendert.
+- Opt-in ueber `docker-compose.mesh.yml` (setzt `MESH_SERVICE_URL`). Ohne diesen Dienst bleibt die Funktion ausgeblendet.
+
 ## [1.8.0] - 2026-11-01
 
 ### Geaendert

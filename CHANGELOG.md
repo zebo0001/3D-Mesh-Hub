@@ -3,6 +3,17 @@
 Alle nennenswerten Aenderungen an 3D Mesh Hub werden hier dokumentiert.
 Das Projekt folgt [Semantic Versioning](https://semver.org/lang/de/) (MAJOR.MINOR.PATCH).
 
+## [1.10.0] - 2026-11-13
+
+### Hinzugefuegt
+- Aufteilen fuer den Druck (STL/OBJ, setzt den optionalen Mesh-Dienst voraus): Modell auf eine Zielhoehe skalieren und mit ebenen Schnitten teilen, bis jedes Teil aufs Druckbett passt. Druckbett aus den Viewer-Profilen (z.B. Kobra X, Kobra 3 Max) oder eigene Masze, einstellbarer Rand (Standard 10 mm), Zielhoehe, Umkehr der Oben/Unten-Nummerierung.
+- Schnittstellen werden dort vorgeschlagen, wo der Querschnitt klein ist (Hals, Taille, Gelenke) und beide Seiten noch machbar bleiben. Ergebnis: ZIP mit einer druckfertig ausgerichteten STL je Teil (Z oben, Schnittflaeche moeglichst unten) plus `plan.json`.
+- Eingebaute Pruefungen: Volumensumme der Teile gegen das Original, jedes Teil passt aufs Bett, Warnung bei winzigen Splittern. Das Aufteilen nimmt automatisch die reparierte Kopie, nicht geschlossene Netze werden mit Hinweis abgelehnt.
+- Noch nicht enthalten: Verbinder (Duebel/Zapfen/Rohrkanal), manuelles Verschieben der Schnittebenen im Viewer, 3MF mit Verteilung auf mehrere Druckbetten.
+
+### Behoben
+- `mesh-service/Dockerfile` kopiert jetzt auch `planner.py` ins Image.
+
 ## [1.9.1] - 2026-11-13
 
 ### Behoben

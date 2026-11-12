@@ -229,6 +229,17 @@ Ohne dieses Setup erscheint der Button einfach nicht (kein absoluter
 `DATA_ROOT`-Pfad in der `.env` gesetzt) bzw. tut beim Klick nichts.
 macOS/Linux werden aktuell nicht unterstützt.
 
+## Mesh-Werkzeuge (optional): reparieren und aufteilen
+
+Ein kleiner Python-Dienst (`mesh-service`, eigener Container, nicht von aussen erreichbar) ergaenzt zwei Werkzeuge fuer STL/OBJ in der Detailansicht. Ohne den Dienst bleiben sie ausgeblendet.
+
+Aktivieren: `docker compose -f docker-compose.yml -f docker-compose.mesh.yml up -d --build`
+
+- **Mesh pruefen und reparieren:** schliesst Loecher, behebt fehlerhafte Kanten und entfernt winzige Splitter. Ergebnis als neue STL im App-Datenvolumen (`repaired/`), die Originaldatei bleibt unveraendert.
+- **Aufteilen fuer den Druck:** skaliert auf eine Zielhoehe und teilt mit ebenen Schnitten, bis jedes Teil aufs gewaehlte Druckbett passt (Profile wie im Viewer oder eigene Masze, Rand einstellbar). Ergebnis: ZIP mit einer STL je Teil, fertig fuer den Slicer ausgerichtet (`split/`). Das Modell muss geschlossen sein, die reparierte Kopie wird automatisch genommen.
+
+Grenzen (Stand 1.10.0): nur ebene Schnitte, keine Verbinder (Duebel, Zapfen) und kein 3MF mit mehreren Druckbetten. An duennen Strukturen (Haarstraehnen, Finger) koennen kleine Splitter entstehen, davor warnt das Tool. Die Schnittvorschlaege sind mit einem einzigen Modell getestet.
+
 ## Filament-Mengen-Erfassung
 
 Im Detail-Formular kann pro Datei die benötigte Filamentmenge erfasst werden - als Liste

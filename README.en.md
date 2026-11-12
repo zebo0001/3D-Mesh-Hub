@@ -226,6 +226,17 @@ Without this setup the button simply doesn't appear (no absolute
 `DATA_ROOT` path set in `.env`), or does nothing when clicked. macOS/Linux
 are not currently supported.
 
+## Mesh tools (optional): repair and split
+
+A small Python service (`mesh-service`, its own container, not reachable from outside) adds two tools for STL/OBJ in the detail view. Without the service they stay hidden.
+
+Enable: `docker compose -f docker-compose.yml -f docker-compose.mesh.yml up -d --build`
+
+- **Check and repair mesh:** closes holes, fixes faulty edges and removes tiny fragments. The result is a new STL in the app data volume (`repaired/`); the original file stays unchanged.
+- **Split for printing:** scales to a target height and splits with flat cuts until every part fits the chosen print bed (profiles as in the viewer or custom size, adjustable margin). Result: a ZIP with one STL per part, oriented for the slicer (`split/`). The model must be watertight; the repaired copy is used automatically.
+
+Limits (as of 1.10.0): flat cuts only, no connectors (dowels, pegs) and no 3MF with several print beds. Thin structures (hair strands, fingers) can produce tiny fragments; the tool warns about them. The cut suggestions have only been tested with a single model.
+
 ## Filament amount tracking
 
 The detail form lets you record the filament amount needed per file — as a

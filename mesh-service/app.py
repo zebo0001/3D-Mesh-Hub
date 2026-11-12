@@ -9,10 +9,12 @@ der Hub per HTTP schickt, und gibt das Ergebnis als neue STL zurueck.
 
 Endpunkte:
   GET  /health
-  POST /jobs            multipart: model (Datei), modelFilename (optional)
+  POST /jobs            multipart: model (Datei), modelFilename (optional),
+                        kind ("repair" oder "split", Standard repair),
+                        params (JSON, nur fuer split, siehe planner.py)
                         -> {ok, job_id}
   GET  /jobs/{id}       -> {ok, state: queued|running|done|error, report?, error?}
-  GET  /jobs/{id}/result  -> reparierte STL (binaer)
+  GET  /jobs/{id}/result  -> reparierte STL (repair) bzw. ZIP mit Teilen (split)
 """
 import json
 import multiprocessing
@@ -25,6 +27,8 @@ import uuid
 import numpy as np
 import pymeshfix
 import trimesh
+
+import planner
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 
@@ -147,7 +151,7 @@ def repair_mesh(path, progress=None):
     return result, report
 
 
-def _child_main(src_path, out_path, progress_path, report_path):
+def _child_main(src_path, out_path, progress_path, report_path, kind="repair", params=None):
     """Laeuft in einem eigenen Prozess. pymeshfix ist C++ und gibt die Python-GIL
     nicht frei; in einem Thread wuerde es den Webserver waehrend der Reparatur
     komplett blockieren (Status-Abfragen laufen dann in ein Timeout)."""
@@ -160,9 +164,15 @@ def _child_main(src_path, out_path, progress_path, report_path):
 
     started = time.time()
     try:
-        mesh, report = repair_mesh(src_path, progress)
-        progress("Schreibe Ergebnis")
-        mesh.export(out_path, file_type="stl")
+        if kind == "split":
+            data, report = planner.split_mesh(src_path, params or {}, progress)
+            progress("Schreibe Ergebnis")
+            with open(out_path, "wb") as fh:
+                fh.write(data)
+        else:
+            mesh, report = repair_mesh(src_path, progress)
+            progress("Schreibe Ergebnis")
+            mesh.export(out_path, file_type="stl")
         report["seconds"] = round(time.time() - started, 1)
         payload = {"ok": True, "report": report}
     except Exception as exc:  # Fehlertext an den Hub durchreichen
@@ -179,16 +189,16 @@ def _read_text(path):
         return None
 
 
-def _run_job(job_id, src_path, ext):
+def _run_job(job_id, src_path, ext, kind="repair", params=None):
     """Ueberwacht den Reparatur-Prozess (leichter Thread, haelt die GIL nicht)."""
     job = _jobs[job_id]
     job["state"] = "running"
-    out_path = src_path + "_repariert.stl"
+    out_path = src_path + ("_teile.zip" if kind == "split" else "_repariert.stl")
     progress_path = src_path + ".progress"
     report_path = src_path + ".report.json"
     try:
         ctx = multiprocessing.get_context("spawn")
-        proc = ctx.Process(target=_child_main, args=(src_path, out_path, progress_path, report_path), daemon=True)
+        proc = ctx.Process(target=_child_main, args=(src_path, out_path, progress_path, report_path, kind, params), daemon=True)
         proc.start()
         while proc.is_alive():
             msg = _read_text(progress_path)
@@ -249,7 +259,7 @@ def health():
 
 
 @app.post("/jobs")
-async def create_job(model: UploadFile = File(...), modelFilename: str = Form(default="")):
+async def create_job(model: UploadFile = File(...), modelFilename: str = Form(default=""), kind: str = Form(default="repair"), params: str = Form(default="")):
     _cleanup_old_jobs()
     name = modelFilename or model.filename or "model.stl"
     ext = os.path.splitext(name)[1].lower()
@@ -258,6 +268,14 @@ async def create_job(model: UploadFile = File(...), modelFilename: str = Form(de
             status_code=400,
             content={"ok": False, "error": f"Format {ext or '?'} wird in dieser Stufe nicht unterstuetzt (STL und OBJ)"},
         )
+    if kind not in ("repair", "split"):
+        return JSONResponse(status_code=400, content={"ok": False, "error": f"Unbekannte Auftragsart '{kind}'"})
+    try:
+        job_params = json.loads(params) if params else {}
+        if not isinstance(job_params, dict):
+            raise ValueError("kein Objekt")
+    except ValueError:
+        return JSONResponse(status_code=400, content={"ok": False, "error": "Parameter sind kein gueltiges JSON-Objekt"})
     fd, tmp_path = tempfile.mkstemp(suffix=ext, prefix="mesh_")
     with os.fdopen(fd, "wb") as fh:
         while True:
@@ -266,8 +284,8 @@ async def create_job(model: UploadFile = File(...), modelFilename: str = Form(de
                 break
             fh.write(chunk)
     job_id = uuid.uuid4().hex
-    _jobs[job_id] = {"state": "queued", "created": time.time(), "progress": "In Warteschlange", "filename": name}
-    threading.Thread(target=_run_job, args=(job_id, tmp_path, ext), daemon=True).start()
+    _jobs[job_id] = {"state": "queued", "created": time.time(), "progress": "In Warteschlange", "filename": name, "kind": kind}
+    threading.Thread(target=_run_job, args=(job_id, tmp_path, ext, kind, job_params), daemon=True).start()
     return {"ok": True, "job_id": job_id}
 
 
@@ -289,4 +307,6 @@ def job_result(job_id: str):
     job = _jobs.get(job_id)
     if not job or job.get("state") != "done":
         raise HTTPException(status_code=404, detail="Ergebnis nicht verfuegbar")
+    if job.get("kind") == "split":
+        return FileResponse(job["result_path"], media_type="application/zip", filename="teile.zip")
     return FileResponse(job["result_path"], media_type="model/stl", filename="repariert.stl")

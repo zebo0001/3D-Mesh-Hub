@@ -535,3 +535,13 @@ display: flex; flex-direction: column; gap: 0.2rem; font-size: 0.78rem; color: v
 .mesh-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; margin: 0.5rem 0; }
 .mesh-actions .btn-secondary { background: var(--panel-2); color: var(--text); border: 1px solid var(--border); border-radius: 8px; padding: 0.3rem 0.7rem; cursor: pointer; font-family: inherit; font-size: 0.85rem; text-decoration: none; display: inline-block; }
 .mesh-actions .btn-secondary:hover { border-color: var(--accent); }
+.mesh-sub { margin: 0.5rem 0 0.3rem; font-size: 0.9rem; }
+.split-box { margin-top: 0.9rem; padding-top: 0.7rem; border-top: 1px solid var(--border); }
+.split-form { display: flex; flex-wrap: wrap; gap: 0.6rem 0.9rem; align-items: flex-end; margin: 0.5rem 0; }
+.split-form label { display: flex; flex-direction: column; gap: 0.2rem; font-size: 0.78rem; color: var(--muted); }
+.split-form label.vt-check { flex-direction: row; align-items: center; }
+.split-form input[type=number], .split-form select { background: var(--panel-2); color: var(--text); border: 1px solid var(--border); border-radius: 8px; padding: 0.3rem 0.5rem; font-family: inherit; font-size: 0.85rem; }
+.split-form input[type=number] { width: 5.5rem; }
+#sp-custom { display: inline-flex; gap: 0.5rem; }
+#sp-custom[hidden] { display: none; }
+.mesh-actions button:disabled { opacity: 0.5; cursor: wait; }

@@ -714,7 +714,130 @@ return `<div class="unit-box ${cls}" id="unit-box"><div class="unit-status">${es
 
 // ---- Mesh-Werkzeuge: Reparatur (optionaler Mesh-Dienst) ----
 function meshBoxHtml() {
-return `<div class="avail-box mesh-box" id="mesh-box" hidden><h3>${t('mesh.title')}</h3><div id="mesh-body"></div></div>`;
+return `<div class="avail-box mesh-box" id="mesh-box" hidden><h3>${t('mesh.tools')}</h3><h4 class="mesh-sub">${t('mesh.title')}</h4><div id="mesh-body"></div>${splitBoxHtml()}</div>`;
+}
+
+// ---- Mesh-Werkzeuge: Skalieren und Aufteilen aufs Druckbett ----
+function splitBoxHtml() {
+const presets = BED_PRESETS.map((p) => `<option value="${p.id}">${escapeHtml(p.name)} (${p.x}×${p.z}×${p.h})</option>`).join('');
+return `<div class="split-box"><h4 class="mesh-sub">${t('split.title')}</h4>
+<p class="hint">${t('split.intro')}</p>
+<div class="split-form">
+<label>${t('split.printer')}<select id="sp-printer">${presets}<option value="custom">${t('split.custom')}</option></select></label>
+<span id="sp-custom" hidden>
+<label>X (mm)<input type="number" id="sp-bx" min="50" max="2000" step="1" value="250"></label>
+<label>Y (mm)<input type="number" id="sp-by" min="50" max="2000" step="1" value="250"></label>
+<label>Z (mm)<input type="number" id="sp-bz" min="50" max="2000" step="1" value="250"></label>
+</span>
+<label>${t('split.margin')}<input type="number" id="sp-margin" min="0" max="100" step="1" value="10"></label>
+<label>${t('split.height')}<input type="number" id="sp-height" min="10" max="10000" step="10" value="1400"></label>
+<label class="vt-check"><input type="checkbox" id="sp-flip"> ${t('split.flip')}</label>
+</div>
+<div class="mesh-actions"><button type="button" class="btn-secondary" id="sp-start">${t('split.start')}</button></div>
+<div id="sp-result"></div></div>`;
+}
+
+function bindSplitTool(f) {
+const q = (id) => document.getElementById(id);
+const printerSel = q('sp-printer');
+const resultEl = q('sp-result');
+const startBtn = q('sp-start');
+if (!printerSel || !resultEl || !startBtn) return;
+const alive = () => document.body.contains(printerSel);
+const n1 = (v) => Number(v).toLocaleString(localeTag(), { maximumFractionDigits: 1 });
+
+// Letzte Eingaben nur als Komfort im Browser merken (kann leer sein oder fehlen)
+let saved = {};
+try { saved = JSON.parse(localStorage.getItem('meshSplit') || '{}') || {}; } catch { saved = {}; }
+printerSel.value = [...printerSel.options].some((o) => o.value === saved.printer) ? saved.printer : 'kobra_3_max';
+for (const [id, key] of [['sp-bx', 'bx'], ['sp-by', 'by'], ['sp-bz', 'bz'], ['sp-margin', 'margin'], ['sp-height', 'height']]) {
+if (saved[key] != null && saved[key] !== '') q(id).value = saved[key];
+}
+q('sp-flip').checked = !!saved.flip;
+const syncCustom = () => { q('sp-custom').hidden = printerSel.value !== 'custom'; };
+printerSel.addEventListener('change', syncCustom);
+syncCustom();
+
+const readInput = () => {
+let bed;
+if (printerSel.value === 'custom') {
+bed = { x: Number(q('sp-bx').value), y: Number(q('sp-by').value), z: Number(q('sp-bz').value) };
+} else {
+const p = BED_PRESETS.find((b) => b.id === printerSel.value);
+bed = { x: p.x, y: p.z, z: p.h }; // Profil: x = Breite, z = Tiefe, h = Hoehe
+}
+return {
+bed,
+margin_mm: q('sp-margin').value === '' ? 10 : Number(q('sp-margin').value),
+target_height_mm: Number(q('sp-height').value),
+up_flip: q('sp-flip').checked,
+};
+};
+const remember = () => {
+try {
+localStorage.setItem('meshSplit', JSON.stringify({
+printer: printerSel.value, bx: q('sp-bx').value, by: q('sp-by').value, bz: q('sp-bz').value,
+margin: q('sp-margin').value, height: q('sp-height').value, flip: q('sp-flip').checked,
+}));
+} catch { /* Speicher gesperrt: egal */ }
+};
+
+const reportHtml = (r, url) => {
+const checks = r.checks || {};
+const fits = !!checks.all_parts_fit;
+const warns = (r.warnings || []).map((w) => `<div class="mesh-warn">${escapeHtml(w)}</div>`).join('');
+const rows = (r.parts || []).map((p) => `<tr><td>${escapeHtml(p.name)}</td><td>${p.extents_mm.map(n1).join(' × ')}</td><td>${n1(p.volume_cm3)}</td><td>${p.flat_cut_face_down ? '✓' : '–'}</td></tr>`).join('');
+const e = r.scaled_extents_mm || [];
+const b = r.bed_usable_mm || [];
+return `<div class="mesh-result ${fits ? 'ok' : 'warn'}">${fits ? t('split.done', { n: r.part_count }) : t('split.doneNoFit', { n: r.part_count })}</div>
+<div class="hint">${t('split.facts', { scale: Number(r.scale).toLocaleString(localeTag(), { maximumFractionDigits: 3 }), w: n1(e[0]), h: n1(e[1]), d: n1(e[2]), bw: n1(b[0]), bd: n1(b[1]), bh: n1(b[2]) })}</div>
+<div class="hint">${t('split.up', { axis: String(r.up_axis || '').toUpperCase(), how: r.up_axis_auto ? t('split.upAuto') : t('split.upSet') })}</div>
+<table class="mesh-table"><tr><th>${t('split.colPart')}</th><th>${t('split.colSize')}</th><th>${t('split.colVol')}</th><th>${t('split.colFlat')}</th></tr>${rows}</table>
+${warns}
+<div class="mesh-actions"><a class="btn-secondary" href="${url}" download>${t('split.download')}</a></div>
+<div class="hint">${t('split.note')}</div>`;
+};
+
+let timer = null;
+const render = (st) => {
+if (!alive()) return;
+const running = st.state === 'queued' || st.state === 'running';
+startBtn.disabled = running;
+if (running) {
+resultEl.innerHTML = `<div class="hint">${t('split.running')}${st.progress ? ' – ' + escapeHtml(st.progress) : ''}</div>`;
+} else if (st.state === 'done') {
+resultEl.innerHTML = reportHtml(st.report || {}, st.download_url);
+} else if (st.state === 'error') {
+resultEl.innerHTML = `<div class="mesh-warn">${escapeHtml(st.error || t('split.error'))}</div>`;
+} else {
+resultEl.innerHTML = '';
+}
+};
+const poll = async () => {
+if (timer) { clearTimeout(timer); timer = null; }
+if (!alive()) return;
+let st;
+try { st = await api(`/api/files/${f.id}/split`); } catch (e) { st = { state: 'error', error: e.message }; }
+render(st);
+if (st.state === 'queued' || st.state === 'running') timer = setTimeout(poll, 3000);
+};
+
+startBtn.addEventListener('click', async () => {
+const input = readInput();
+const nums = [input.bed.x, input.bed.y, input.bed.z, input.margin_mm, input.target_height_mm];
+if (nums.some((v) => !Number.isFinite(v))) { render({ state: 'error', error: t('split.badNumbers') }); return; }
+remember();
+render({ state: 'queued', progress: t('mesh.uploading') });
+try {
+await api(`/api/files/${f.id}/split`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input) });
+} catch (e) {
+render({ state: 'error', error: e.message });
+return;
+}
+poll();
+});
+
+poll(); // vorhandenes Ergebnis oder laufenden Auftrag anzeigen
 }
 
 async function bindMeshBox(f) {
@@ -725,6 +848,7 @@ let status;
 try { status = await api('/api/mesh/status'); } catch { return; }
 if (!status.enabled) return; // Funktion bleibt ausgeblendet
 box.hidden = false;
+bindSplitTool(f);
 
 const n = (v) => (v == null ? '–' : Number(v).toLocaleString(localeTag()));
 const yesNo = (b) => (b ? t('mesh.yes') : t('mesh.no'));

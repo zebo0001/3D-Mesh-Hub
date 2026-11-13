@@ -45,11 +45,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libxdamage1 \
     libasound2t64 \
     libwebkit2gtk-4.1-0 \
+    libopengl0 \
+    libmspack0t64 \
     fontconfig \
   && rm -rf /var/lib/apt/lists/*
 
 # OrcaSlicer AppImage herunterladen und extrahieren (kein FUSE im Container
 # noetig dank --appimage-extract).
+# Andere Version testen: docker compose ... build --build-arg ORCA_TAG=v2.5.0 \
+#   --build-arg ORCA_ASSET=OrcaSlicer_Linux_AppImage_Ubuntu2404_V2.5.0.AppImage slicer-service
+# (libopengl0 und libmspack0t64 oben werden von 2.5.0 zusaetzlich verlangt; mit einem
+# Minimalprofil in der Cloud getestet, der Docker-Build selbst noch nicht.)
 ARG ORCA_TAG=v2.4.2
 ARG ORCA_ASSET=OrcaSlicer_Linux_AppImage_Ubuntu2404_V2.4.2.AppImage
 RUN wget -q "https://github.com/OrcaSlicer/OrcaSlicer/releases/download/${ORCA_TAG}/${ORCA_ASSET}" -O /tmp/orca.AppImage \

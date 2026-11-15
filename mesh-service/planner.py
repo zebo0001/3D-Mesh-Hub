@@ -160,6 +160,83 @@ def _choose_cut(M, axis, lo, hi, n, limit):
     return best[1], best[2], best[3]
 
 
+
+# ---------------------------------------------------------------- Anker (Teilezuordnung fuer feste Schnitte)
+
+def _point_in_polys(pt, polys):
+    """Even-Odd-Test ueber alle Konturen (Loecher werden dadurch beruecksichtigt)."""
+    x, y = pt
+    inside = False
+    for poly in polys:
+        p = np.asarray(poly, dtype=float)
+        if len(p) < 3:
+            continue
+        x1, y1 = p[:, 0], p[:, 1]
+        x2, y2 = np.roll(x1, -1), np.roll(y1, -1)
+        cond = (y1 > y) != (y2 > y)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            xin = (x2 - x1) * (y - y1) / (y2 - y1) + x1
+        if np.count_nonzero(cond & (x < xin)) % 2 == 1:
+            inside = not inside
+    return inside
+
+
+def _interior_point(cs):
+    """Ein Punkt sicher im Inneren des Querschnitts (Ansichts-Koordinaten u,v)."""
+    polys = [np.asarray(p, dtype=float) for p in cs.to_polygons()]
+    polys = [p for p in polys if len(p) >= 3]
+    if not polys:
+        return None
+
+    def area(p):
+        x, y = p[:, 0], p[:, 1]
+        return 0.5 * float(np.dot(x, np.roll(y, -1)) - np.dot(y, np.roll(x, -1)))
+
+    big = max(polys, key=lambda p: abs(area(p)))
+    c = big.mean(axis=0)
+    lo, hi = big.min(axis=0), big.max(axis=0)
+    cands = [c]
+    for fx in np.linspace(0.05, 0.95, 19):
+        for fy in np.linspace(0.05, 0.95, 19):
+            cands.append(lo + (hi - lo) * np.array([fx, fy]))
+    cands.sort(key=lambda q: float(np.hypot(*(q - c))))
+    for q in cands:
+        if _point_in_polys(q, polys):
+            return [round(float(q[0]), 3), round(float(q[1]), 3)]
+    return None
+
+
+def _contains_anchor(M, axis, pos, anchor):
+    cs = _axis_view(M, axis).slice(float(pos))
+    polys = [np.asarray(p, dtype=float) for p in cs.to_polygons()]
+    return _point_in_polys(anchor, polys)
+
+
+def _split_piece(M, faces, axis, pos):
+    """Teilt ein Stueck an der Ebene; liefert Liste neuer (Manifold, Schnittflaechen)."""
+    normal = [0.0, 0.0, 0.0]
+    normal[axis] = 1.0
+    above, below = M.split_by_plane(normal, pos)
+    out = []
+    for piece, side in ((below, "max"), (above, "min")):
+        if piece.is_empty():
+            continue
+        for comp in piece.decompose():
+            if comp.volume() <= 1e-6:
+                continue
+            clo, chi = _bounds(comp)
+            nf = list(faces)
+            touch = chi[axis] if side == "max" else clo[axis]
+            if abs(touch - pos) < 1e-2:
+                nf.append((axis, side))
+            out.append((comp, nf))
+    return out
+
+
+def _fallback_perm(ext, bed):
+    """Fuer Teile, die nicht passen: Zuordnung mit dem kleinsten Ueberstand."""
+    return min(PERMS, key=lambda p: (max(ext[p[i]] / bed[i] for i in range(3)), ext[p[2]]))
+
 # ---------------------------------------------------------------- Hauptfunktion
 
 def split_mesh(path, params, progress=None):
@@ -195,51 +272,110 @@ def split_mesh(path, params, progress=None):
         raise PlanError("Druckbett abzueglich Rand ist zu klein")
 
     say("Skaliere")
+    origin = loaded.bounds[0].copy()   # Dateikoordinate der Modellecke: Datei = origin + Position / scale
     loaded.apply_scale(scale)
     loaded.vertices -= loaded.bounds[0]
     volume_scaled = float(loaded.volume)
     M0 = _to_manifold(loaded)
     ext_scaled = [float(x) for x in loaded.extents]
 
-    work = [(M0, [])]
-    done = []
+    warnings = []
+    manual = params.get("cuts")
     cuts = []
-    while work:
-        M, faces = work.pop()
-        lo_v, hi_v = _bounds(M)
-        ext = hi_v - lo_v
-        if _fitting_perms(ext, bed):
-            done.append((M, faces))
-            continue
-        if len(done) + len(work) >= MAX_PARTS:
-            raise PlanError(f"Mehr als {MAX_PARTS} Teile - Einstellungen pruefen (Zielhoehe, Druckbett)")
-        axis, ratio, limit = _worst_axis(ext, bed)
-        n = max(2, math.ceil(ratio - 1e-9))
-        lo, hi = float(lo_v[axis]), float(hi_v[axis])
-        say(f"Schnitt {len(cuts) + 1} ({len(done) + len(work) + 1} Teile)")
-        pos, area, contours = _choose_cut(M, axis, lo, hi, n, limit)
-        normal = [0.0, 0.0, 0.0]
-        normal[axis] = 1.0
-        above, below = M.split_by_plane(normal, pos)
-        cuts.append({
-            "axis": AXIS_NAMES[axis],
-            "position_mm": round(pos, 2),
-            "area_mm2": round(area, 1),
-            "contours": contours,
-            "part_extents_mm": [round(float(x), 1) for x in ext],
-        })
-        for piece, side in ((below, "max"), (above, "min")):
-            if piece.is_empty():
+    if manual is None:
+        work = [(M0, [])]
+        done = []
+        while work:
+            M, faces = work.pop()
+            lo_v, hi_v = _bounds(M)
+            ext = hi_v - lo_v
+            if _fitting_perms(ext, bed):
+                done.append((M, faces))
                 continue
-            for comp in piece.decompose():
-                if comp.volume() <= 1e-6:
+            if len(done) + len(work) >= MAX_PARTS:
+                raise PlanError(f"Mehr als {MAX_PARTS} Teile - Einstellungen pruefen (Zielhoehe, Druckbett)")
+            axis, ratio, limit = _worst_axis(ext, bed)
+            n = max(2, math.ceil(ratio - 1e-9))
+            lo, hi = float(lo_v[axis]), float(hi_v[axis])
+            say(f"Schnitt {len(cuts) + 1} ({len(done) + len(work) + 1} Teile)")
+            pos, area, contours = _choose_cut(M, axis, lo, hi, n, limit)
+            anchor = _interior_point(_axis_view(M, axis).slice(float(pos)))
+            cuts.append({
+                "axis": AXIS_NAMES[axis],
+                "position_mm": round(pos, 2),
+                "area_mm2": round(area, 1),
+                "contours": contours,
+                "part_extents_mm": [round(float(x), 1) for x in ext],
+                "anchor": anchor,
+                "region_mm": [round(float(x), 2) for x in list(lo_v) + list(hi_v)],
+                "pieces_cut": 1,
+            })
+            for item in _split_piece(M, faces, axis, pos):
+                work.append(item)
+    else:
+        if not isinstance(manual, list) or len(manual) > 60:
+            raise PlanError("Ungueltige Schnittliste")
+        done = [(M0, [])]
+        for ci, c in enumerate(manual, 1):
+            say(f"Schnitt {ci} von {len(manual)}")
+            try:
+                axis = AXIS_NAMES.index(str(c["axis"]).lower())
+                pos = float(c["position_mm"])
+            except (KeyError, ValueError, TypeError):
+                raise PlanError(f"Schnitt {ci}: Achse oder Position ungueltig")
+            anchor = c.get("anchor")
+            region = c.get("region_mm")
+            cand = []
+            for idx, (M, faces) in enumerate(done):
+                lo_v, hi_v = _bounds(M)
+                if not (lo_v[axis] + 0.5 < pos < hi_v[axis] - 0.5):
                     continue
-                clo, chi = _bounds(comp)
-                new_faces = list(faces)
-                touch = (chi[axis] if side == "max" else clo[axis])
-                if abs(touch - pos) < 1e-2:
-                    new_faces.append((axis, side))
-                work.append((comp, new_faces))
+                cand.append(idx)
+            sel = []
+            if anchor and len(anchor) == 2:
+                sel = [i for i in cand if _contains_anchor(done[i][0], axis, pos, anchor)]
+            if not sel and region and len(region) == 6:
+                for i in cand:
+                    lo_v, hi_v = _bounds(done[i][0])
+                    if all(min(hi_v[k], region[3 + k]) - max(lo_v[k], region[k]) > 1.0 for k in range(3)):
+                        sel.append(i)
+            if not sel and not anchor and not region:
+                sel = cand
+            area_sum, contours_sum, ext_first = 0.0, 0, None
+            for i in sel:
+                M, faces = done[i]
+                cs = _axis_view(M, axis).slice(float(pos))
+                area_sum += float(cs.area())
+                contours_sum += int(cs.num_contour())
+            if not sel:
+                warnings.append(f"Schnitt {ci} ({AXIS_NAMES[axis]} = {pos:.1f} mm) trifft kein Teil und wurde ignoriert")
+                cuts.append({"axis": AXIS_NAMES[axis], "position_mm": round(pos, 2), "area_mm2": 0.0,
+                             "contours": 0, "part_extents_mm": [], "anchor": anchor, "region_mm": region,
+                             "pieces_cut": 0})
+                continue
+            if len(done) + len(sel) > MAX_PARTS:
+                raise PlanError(f"Mehr als {MAX_PARTS} Teile - Schnittliste pruefen")
+            first_ext = _bounds(done[sel[0]][0])
+            new_anchor = anchor
+            if not (anchor and len(anchor) == 2 and _contains_anchor(done[sel[0]][0], axis, pos, anchor)):
+                new_anchor = _interior_point(_axis_view(done[sel[0]][0], axis).slice(float(pos)))
+            cuts.append({
+                "axis": AXIS_NAMES[axis],
+                "position_mm": round(pos, 2),
+                "area_mm2": round(area_sum, 1),
+                "contours": contours_sum,
+                "part_extents_mm": [round(float(x), 1) for x in (first_ext[1] - first_ext[0])],
+                "anchor": new_anchor,
+                "region_mm": region,
+                "pieces_cut": len(sel),
+            })
+            new_done = []
+            for i, (M, faces) in enumerate(done):
+                if i in sel:
+                    new_done.extend(_split_piece(M, faces, axis, pos))
+                else:
+                    new_done.append((M, faces))
+            done = new_done
 
     say("Richte Teile aus")
     parts = []
@@ -247,6 +383,9 @@ def split_mesh(path, params, progress=None):
         lo_v, hi_v = _bounds(M)
         ext = hi_v - lo_v
         p = _pick_perm(ext, bed, faces, up)
+        fits = p is not None
+        if p is None:
+            p = _fallback_perm(ext, bed)
         tm = _to_trimesh(M)
         oriented, flat, flipped = _orient(tm, p, faces)
         centroid = (lo_v + hi_v) / 2.0
@@ -257,6 +396,8 @@ def split_mesh(path, params, progress=None):
             "flat_cut_face_down": bool(flat),
             "turned_over": bool(flipped),
             "up_axis_original": AXIS_NAMES[p[2]],
+            "fits": bool(fits),
+            "bounds_mm": [round(float(x), 2) for x in list(lo_v) + list(hi_v)],
         })
     parts.sort(key=lambda d: d["sort"])
 
@@ -275,21 +416,27 @@ def split_mesh(path, params, progress=None):
                 "flat_cut_face_down": d["flat_cut_face_down"],
                 "up_axis_original": d["up_axis_original"],
                 "tiny": d["volume"] < SPLITTER_MM3,
+                "fits": d["fits"],
+                "bounds_mm": d["bounds_mm"],
             })
         vol_sum = sum(d["volume"] for d in parts)
         diff = abs(vol_sum - volume_scaled) / max(volume_scaled, 1.0)
         all_fit = all(
             all(sorted(r["extents_mm"])[i] <= sorted(bed)[i] + 0.2 for i in range(3)) for r in part_reports
         )
-        warnings = []
         if diff > 1e-4:
             warnings.append(f"Volumensumme weicht um {diff * 100:.3f} % vom Original ab - Ergebnis pruefen")
         tiny = sum(1 for r in part_reports if r["tiny"])
         if tiny:
             warnings.append(f"{tiny} sehr kleine Teile (unter 1 cm3) entstanden - Schnitte pruefen")
+        nofit = sum(1 for r in part_reports if not r["fits"])
+        if nofit:
+            warnings.append(f"{nofit} Teile passen noch nicht aufs Druckbett - weitere Schnitte setzen")
         no_flat = sum(1 for r in part_reports if not r["flat_cut_face_down"])
         report = {
             "scale": round(scale, 5),
+            "origin_mm": [round(float(x), 4) for x in origin],
+            "manual": manual is not None,
             "up_axis": AXIS_NAMES[up],
             "up_axis_auto": up_mode == "auto",
             "up_flip": bool(params.get("up_flip")),

@@ -83,6 +83,26 @@ function num(value, min, max) {
 }
 
 // Eingaben fuer das Aufteilen pruefen. Gibt { params } oder { error } zurueck.
+// Feste Schnittliste (optional): [{axis, position_mm, anchor?, region_mm?}], Reihenfolge = Anwendungsreihenfolge
+function validateCuts(raw) {
+  if (raw === undefined || raw === null) return { cuts: undefined };
+  if (!Array.isArray(raw) || raw.length > 60) return { error: 'Schnittliste: hoechstens 60 Schnitte' };
+  const finite = (v) => typeof v === 'number' && Number.isFinite(v);
+  const cuts = [];
+  for (let i = 0; i < raw.length; i++) {
+    const c = raw[i] || {};
+    const axis = String(c.axis || '').toLowerCase();
+    if (!['x', 'y', 'z'].includes(axis)) return { error: `Schnitt ${i + 1}: Achse x, y oder z` };
+    const pos = Number(c.position_mm);
+    if (!Number.isFinite(pos) || Math.abs(pos) > 20000) return { error: `Schnitt ${i + 1}: Position ungueltig` };
+    const cut = { axis, position_mm: pos };
+    if (Array.isArray(c.anchor) && c.anchor.length === 2 && c.anchor.every(finite)) cut.anchor = c.anchor;
+    if (Array.isArray(c.region_mm) && c.region_mm.length === 6 && c.region_mm.every(finite)) cut.region_mm = c.region_mm;
+    cuts.push(cut);
+  }
+  return { cuts };
+}
+
 function validateSplitParams(body) {
   const b = body || {};
   const bed = b.bed || {};
@@ -96,9 +116,11 @@ function validateSplitParams(body) {
   if (height == null) return { error: 'Zielhoehe: 10 bis 10000 mm' };
   const up = String(b.up_axis || 'auto').toLowerCase();
   if (!['auto', 'x', 'y', 'z'].includes(up)) return { error: 'Oben-Achse ungueltig' };
-  return {
-    params: { up_axis: up, up_flip: !!b.up_flip, target_height_mm: height, bed: { x, y, z }, margin_mm: margin },
-  };
+  const vc = validateCuts(b.cuts);
+  if (vc.error) return { error: vc.error };
+  const params = { up_axis: up, up_flip: !!b.up_flip, target_height_mm: height, bed: { x, y, z }, margin_mm: margin };
+  if (vc.cuts) params.cuts = vc.cuts;
+  return { params };
 }
 
 function register(app, { db, safeResolve }) {

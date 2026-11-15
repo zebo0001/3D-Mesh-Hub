@@ -48,6 +48,7 @@ let measurePts = [];
 let measureObjs = [];
 let measureLabelEl = null;
 let modelBox = null;
+let cutGroup = null; // Schnittebenen-Platten (Kind des Modells, erbt dessen Z-up-Drehung)
 const sectionPlane = new THREE.Plane(new THREE.Vector3(1, 0, 0), 0);
 let sectionOn = false;
 const raycaster = new THREE.Raycaster();
@@ -164,6 +165,7 @@ function clearCurrent() {
   origMaterials.clear();
   bedOn = false;
   rebuildBed();
+  cutGroup = null;
   if (currentMesh) {
     scene.remove(currentMesh);
     currentMesh = null;
@@ -382,7 +384,7 @@ export function setBed({ on, presetId }) {
 
 function meshList() {
   const list = [];
-  if (currentMesh) currentMesh.traverse((c) => { if (c.isMesh && !c.userData.cap) list.push(c); });
+  if (currentMesh) currentMesh.traverse((c) => { if (c.isMesh && !c.userData.cap && !c.userData.cutPlate) list.push(c); });
   return list;
 }
 
@@ -495,4 +497,71 @@ export function setSection({ on, axis = 'y', pos = 0.5, flip = false }) {
     }
   }
   return { mm: (at - min) * unitScaleMm, totalMm: (max - min) * unitScaleMm };
+}
+
+// ---------------- Schnittebenen des Aufteilens ----------------
+// Platten liegen in Dateikoordinaten (wie die Planer-Ausgabe) und sind Kinder des Modells,
+// folgen also dessen Drehung/Zentrierung. Sie zaehlen weder fuer Messung noch fuer die Schnittebene.
+
+function localBox() {
+  const box = new THREE.Box3();
+  for (const mesh of meshList()) {
+    if (!mesh.geometry) continue;
+    if (!mesh.geometry.boundingBox) mesh.geometry.computeBoundingBox();
+    box.union(mesh.geometry.boundingBox);
+  }
+  return box;
+}
+
+export function clearCutPlanes() {
+  if (!cutGroup) return;
+  cutGroup.traverse((c) => {
+    if (c.geometry) c.geometry.dispose();
+    if (c.material) c.material.dispose();
+  });
+  if (cutGroup.parent) cutGroup.parent.remove(cutGroup);
+  cutGroup = null;
+}
+
+// planes: [{ axis: 'x'|'y'|'z', pos (Dateikoordinate), region?: [x0,y0,z0,x1,y1,z1] (Datei), active?: bool }]
+export function setCutPlanes(planes) {
+  clearCutPlanes();
+  if (!currentMesh || !Array.isArray(planes) || !planes.length) return;
+  const box = localBox();
+  if (box.isEmpty()) return;
+  cutGroup = new THREE.Group();
+  for (const p of planes) {
+    const a = { x: 0, y: 1, z: 2 }[p.axis];
+    if (a === undefined || !Number.isFinite(p.pos)) continue;
+    const lo = box.min.toArray();
+    const hi = box.max.toArray();
+    if (Array.isArray(p.region) && p.region.length === 6 && p.region.every(Number.isFinite)) {
+      for (let k = 0; k < 3; k++) { lo[k] = p.region[k]; hi[k] = p.region[3 + k]; }
+    }
+    const others = [0, 1, 2].filter((k) => k !== a);
+    const pad = 0.03;
+    const w = (hi[others[0]] - lo[others[0]]) * (1 + 2 * pad);
+    const h = (hi[others[1]] - lo[others[1]]) * (1 + 2 * pad);
+    if (!(w > 0 && h > 0)) continue;
+    // Plane liegt zunaechst in XY (Normale +Z); Achsen so abbilden, dass u/v den "others" entsprechen
+    const geo = new THREE.PlaneGeometry(w, h);
+    if (a === 0) geo.rotateY(Math.PI / 2); // Normale +X: Breite -> Z, Hoehe -> Y
+    if (a === 1) geo.rotateX(-Math.PI / 2); // Normale +Y: Breite -> X, Hoehe -> Z
+    const active = !!p.active;
+    const color = active ? 0xffd23f : 0x35d0c0;
+    const mat = new THREE.MeshBasicMaterial({
+      color, transparent: true, opacity: active ? 0.38 : 0.2, side: THREE.DoubleSide, depthWrite: false,
+    });
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.userData.cutPlate = true;
+    const edges = new THREE.LineSegments(new THREE.EdgesGeometry(geo), new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.9 }));
+    edges.userData.cutPlate = true;
+    mesh.add(edges);
+    const c = [0, 1, 2].map((k) => (lo[k] + hi[k]) / 2);
+    c[a] = p.pos;
+    mesh.position.set(c[0], c[1], c[2]);
+    mesh.renderOrder = 2;
+    cutGroup.add(mesh);
+  }
+  currentMesh.add(cutGroup);
 }

@@ -545,3 +545,28 @@ display: flex; flex-direction: column; gap: 0.2rem; font-size: 0.78rem; color: v
 #sp-custom { display: inline-flex; gap: 0.5rem; }
 #sp-custom[hidden] { display: none; }
 .mesh-actions button:disabled { opacity: 0.5; cursor: wait; }
+
+.split-cuts { margin: 0.6rem 0; }
+.split-cuts .mesh-table td { text-align: right; vertical-align: middle; }
+.split-cuts .mesh-table td.cut-pos { white-space: nowrap; }
+.split-cuts input[type=number], .split-cuts select { background: var(--panel-2); color: var(--text); border: 1px solid var(--border); border-radius: 8px; padding: 0.2rem 0.4rem; font-family: inherit; font-size: 0.82rem; }
+.split-cuts input[type=number] { width: 5.5rem; }
+.split-cuts tr.cut-active td { background: rgba(255,210,63,0.1); }
+.split-cuts .cut-btn { background: var(--panel-2); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 0.1rem 0.4rem; cursor: pointer; font-family: inherit; font-size: 0.78rem; }
+.split-cuts .cut-btn:hover { border-color: var(--accent); }
+.split-cuts .cut-add { display: flex; gap: 0.5rem; align-items: center; margin: 0.4rem 0; flex-wrap: wrap; }
+.mesh-table td.nofit { color: #ff8a65; }
+
+/* ---- Schnitt-Editor: Vollbild-Viewer mit Seitenleiste ---- */
+body.cut-editor-open { overflow: hidden; }
+.viewer-shell.cut-editor { position: fixed; inset: 0; z-index: 1000; background: #0d0f15; display: flex; }
+.viewer-shell.cut-editor #viewer-canvas-wrap { flex: 1 1 auto; height: 100% !important; border-radius: 0; border: 0; min-width: 0; }
+.cut-side { flex: 0 0 min(30rem, 42vw); height: 100%; overflow-y: auto; padding: 0.8rem 1rem; background: var(--panel); border-left: 1px solid var(--border); position: relative; z-index: 4; }
+.cut-side-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem; }
+.cut-side .mesh-actions { margin: 0.4rem 0; }
+@media (max-width: 800px) {
+  .viewer-shell.cut-editor { flex-direction: column; }
+  .cut-side { flex: 0 0 45vh; width: 100%; border-left: 0; border-top: 1px solid var(--border); }
+}
+.cut-side #sp-editor { display: none; }
+.cut-side #sp-cuts > h4 { display: none; }

@@ -3,6 +3,13 @@
 Alle nennenswerten Aenderungen an 3D Mesh Hub werden hier dokumentiert.
 Das Projekt folgt [Semantic Versioning](https://semver.org/lang/de/) (MAJOR.MINOR.PATCH).
 
+## [1.11.0] - 2026-11-15
+
+### Hinzugefuegt
+- Aufteilen: Schnitte bearbeiten. Der automatische Vorschlag liefert eine Schnittliste (Achse, Position in mm ab Modellecke); Positionen lassen sich aendern (Eingabe, +/-5 mm), Schnitte entfernen oder hinzufuegen, dann "Mit diesen Schnitten neu berechnen". Der Planer nimmt dafuer den Parameter `cuts` an und meldet pro Schnitt Anker, Bereich und wie viele Teile er getroffen hat; Schnitte ohne Treffer werden ignoriert und gemeldet.
+- Schnittebenen als durchsichtige Platten im 3D-Viewer (aktiver Schnitt gelb), dazu ein Vollbild-"Schnitt-Editor" mit der Schnittliste als Seitenleiste (Schliessen mit Esc).
+- Teile, die noch nicht aufs Druckbett passen, werden markiert statt den Lauf abzubrechen.
+
 ## [1.10.0] - 2026-11-13
 
 ### Hinzugefuegt

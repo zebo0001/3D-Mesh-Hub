@@ -754,6 +754,7 @@ export async function showParts(parts, origin, scale) {
     loader.load(p.url, (geo) => resolve(geo), undefined, () => resolve(null));
   })));
   if (group !== partsGroup) return false; // inzwischen abgebrochen
+  if (!loaded.some(Boolean)) { hideParts(); return false; } // nichts geladen (z. B. aelteres Ergebnis ohne Vorschau)
   partMeshes = [];
   parts.forEach((p, i) => {
     const geo = loaded[i];

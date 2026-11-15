@@ -3,6 +3,11 @@
 Alle nennenswerten Aenderungen an 3D Mesh Hub werden hier dokumentiert.
 Das Projekt folgt [Semantic Versioning](https://semver.org/lang/de/) (MAJOR.MINOR.PATCH).
 
+## [1.13.1] - 2026-11-15
+
+### Behoben
+- Explosionsansicht: Fehlten die Vorschau-Dateien (Ergebnis aus einer aelteren Version), wurde das Original ausgeblendet und nichts angezeigt, ohne Meldung. Jetzt bleibt das Original sichtbar und es erscheint der Hinweis, neu zu berechnen.
+
 ## [1.13.0] - 2026-11-15
 
 ### Hinzugefuegt

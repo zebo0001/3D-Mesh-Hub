@@ -854,6 +854,7 @@ let explode = 0.3;
 const leaveParts = () => { if (partsView) { partsView = false; hideParts(); } };
 const startParts = async () => {
 if (!lastReport || !Array.isArray(lastReport.parts)) return;
+if (!Array.isArray(lastReport.origin_mm) || !(Number(lastReport.scale) > 0)) { setCutStatus(t('split.partsFail'), true); return; }
 partsView = true;
 renderCuts();
 const o = lastReport.origin_mm;

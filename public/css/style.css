@@ -580,3 +580,7 @@ body.cut-editor-open { overflow: hidden; }
 .cut-explode[hidden] { display: none; }
 .cut-parts-table tr[data-part]:hover td { background: rgba(255,210,63,0.12); }
 .split-cuts input.cut-dw-in { width: 3.6rem; }
+.cut-bed { margin: 0.5rem 0; display: flex; flex-direction: column; gap: 0.3rem; }
+.cut-bed select, .cut-bed input { font: inherit; }
+.cut-bed-custom input { width: 4.2rem; }
+.cut-bed-custom[hidden] { display: none; }

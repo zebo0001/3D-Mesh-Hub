@@ -22,6 +22,7 @@ import manifold3d as m3
 MIN_PIECE_MM = float(os.environ.get("MIN_PIECE_MM", "20"))   # kleinste erlaubte Teildicke an der Schnittstelle
 SEARCH_WINDOW = float(os.environ.get("SEARCH_WINDOW", "0.12"))  # Suchfenster um die Idealposition (Anteil der Laenge)
 SAMPLES = 41
+MAX_DOWELS = int(os.environ.get("MAX_DOWELS", "5"))   # hoechstens so viele Duebel je Schnittflaeche
 MAX_PARTS = int(os.environ.get("MAX_PARTS", "200"))
 SPLITTER_MM3 = 1000.0   # Teile kleiner als 1 cm3 werden als Splitter gemeldet
 
@@ -375,27 +376,178 @@ def _cut_cfg(cfg, dowel_mm):
     return c
 
 
-def _connect(first, spec, n, d, children, cfg, report_extra):
-    """Duebel planen und Loecher bohren. Liefert (Kinder, entferntes Volumen, Verbinder|None, Warnung|None)."""
+def _side_of(comp, n, d, tol=0.5):
+    """'below' / 'above', je nachdem auf welcher Seite der Ebene alle Eckpunkte liegen (None: beidseitig)."""
+    v = np.asarray(comp.to_mesh().vert_properties)[:, :3]
+    sd = v @ np.asarray(n, dtype=float) - d
+    if sd.max() <= tol and sd.min() < -tol:
+        return "below"
+    if sd.min() >= -tol and sd.max() > tol:
+        return "above"
+    return None
+
+
+def _poly_area(p):
+    x, y = p[:, 0], p[:, 1]
+    return 0.5 * float(np.dot(x, np.roll(y, -1)) - np.dot(y, np.roll(x, -1)))
+
+
+def _groups(polys):
+    """Konturen zu Gruppen (aussen, [Loecher]) ordnen: jede Gruppe ist ein zusammenhaengender Teil des Querschnitts."""
+    n = len(polys)
+    cont = [[j for j in range(n) if j != i and _point_in_polys(polys[i][0], [polys[j]])] for i in range(n)]
+    out = []
+    for i in range(n):
+        if len(cont[i]) % 2 == 0:
+            holes = []
+            for k in range(n):
+                if len(cont[k]) % 2 == 1:
+                    parents = [j for j in cont[k] if len(cont[j]) % 2 == 0]
+                    if parents and max(parents, key=lambda j: len(cont[j])) == i:
+                        holes.append(polys[k])
+            out.append((polys[i], holes))
+    return out
+
+
+def _group_polys(g):
+    return [g[0]] + list(g[1])
+
+
+def _group_area(g):
+    return abs(_poly_area(g[0])) - sum(abs(_poly_area(h)) for h in g[1])
+
+
+def _spots(polys, r, count):
+    """Bis zu `count` Duebelmitten im Querschnitt: erste am Punkt mit groesstem Randabstand, weitere moeglichst weit auseinander."""
+    q0, rmax = _pole(polys)
+    if q0 is None:
+        return []
+    centers = [np.asarray(q0, dtype=float)]
+    if count <= 1:
+        return centers
+    allp = np.vstack(polys)
+    lo, hi = allp.min(axis=0), allp.max(axis=0)
+    step = max(r / 2.0, (hi - lo).max() / 60.0)
+    cand = []
+    for x in np.arange(lo[0], hi[0] + step, step):
+        for y in np.arange(lo[1], hi[1] + step, step):
+            q = np.array([x, y])
+            if _point_in_polys(q, polys) and _dist_edges(q, polys) >= r + 2.5:
+                cand.append(q)
+    while len(centers) < count and cand:
+        C = np.array(centers)
+        dmin = [float(np.hypot(*(C - q).T).min()) for q in cand]
+        k = int(np.argmax(dmin))
+        if dmin[k] < 3.2 * r:
+            break
+        centers.append(cand[k])
+        cand.pop(k)
+    return centers
+
+
+def _plan_dowels(first, groups, n, d, frame_back, cfg):
+    """Duebel fuer einen Schnitt: je zusammenhaengender Schnittflaeche mindestens einer, bei grossen Flaechen mehrere."""
+    if not groups:
+        return [], "kein Querschnitt"
+    poles = [(_pole(_group_polys(g)), g) for g in groups]
+    poles = [(q, rm, g) for (q, rm), g in poles if q is not None]
+    if not poles:
+        return [], "Schnittflaeche zu klein fuer einen Duebel"
+    diam = float(cfg.get("diameter_mm") or 0)
+    rmax_all = max(rm for _, rm, _ in poles)
+    r_cut = diam / 2.0 if diam > 0 else min(rmax_all * 0.5, 6.0)
+    depth = float(cfg.get("depth_mm", 15))
+    lo, hi = _bounds(first)
+    corners = np.array([[x, y, z] for x in (lo[0], hi[0]) for y in (lo[1], hi[1]) for z in (lo[2], hi[2])])
+    proj = corners @ n
+    thick = float(max(abs(proj.max() - d), abs(d - proj.min())))
+    depth = min(depth, thick - 4.0)
+    if depth < 6.0:
+        return [], "Teil zu duenn fuer einen Duebel"
+    plans = []
+    for q, rm, g in poles:
+        r = min(r_cut, rm - 1.5)
+        if r < 2.0 or rm < 4.0:
+            continue
+        count = int(max(1, min(MAX_DOWELS, math.floor(_group_area(g) / (math.pi * (4.0 * r) ** 2)))))
+        for c in _spots(_group_polys(g), r, count):
+            plans.append({"center": [float(x) for x in frame_back(c)], "radius": float(r), "depth": float(depth), "rmax": float(rm)})
+    if not plans:
+        return [], "Schnittflaeche zu klein fuer einen Duebel"
+    return plans, None
+
+
+def _connect(first, spec, n, d, children, cfg, report_extra, groups=None, sides=None):
+    """Duebel planen und Loecher bohren. Liefert (Kinder, entferntes Volumen, Liste von Verbindern, Warnung|None).
+
+    groups: nur diese Schnittflaechen verbinden (sonst alle des Querschnitts); sides: Seite je Kind ('below'/'above')."""
     if not cfg.get("enabled"):
-        return children, 0.0, None, None
+        return children, 0.0, [], None
     polys, to3 = _section_polys(first, spec)
-    plan, why = _plan_dowel(first, polys, n, d, lambda q: to3(q[0], q[1]), cfg)
-    if plan is None:
-        return children, 0.0, None, why
+    if groups is None:
+        groups = _groups(polys)
+    plans, why = _plan_dowels(first, groups, n, d, lambda q: to3(q[0], q[1]), cfg)
+    if not plans:
+        return children, 0.0, [], why
     clearance = float(cfg.get("clearance_mm", 0.3))
-    kids, removed = _punch(children, n, d, plan, clearance)
-    conn = {
-        "center_mm": [round(x, 2) for x in plan["center"]],
-        "normal": [round(float(x), 5) for x in n],
-        "diameter_mm": round(plan["radius"] * 2, 2),
-        "hole_diameter_mm": round(plan["radius"] * 2 + clearance, 2),
-        "depth_mm": round(plan["depth"], 1),
-        "dowel_length_mm": round(2 * plan["depth"] - 1.5, 1),
-        "clearance_mm": clearance,
-    }
-    conn.update(report_extra)
-    return kids, removed, conn, None
+    conns = []
+    removed_total = 0.0
+    kids = children
+    for plan in plans:
+        kids, removed = _punch(kids, n, d, plan, clearance, sides)
+        removed_total += removed
+        conn = {
+            "center_mm": [round(x, 2) for x in plan["center"]],
+            "normal": [round(float(x), 5) for x in n],
+            "diameter_mm": round(plan["radius"] * 2, 2),
+            "hole_diameter_mm": round(plan["radius"] * 2 + clearance, 2),
+            "depth_mm": round(plan["depth"], 1),
+            "dowel_length_mm": round(2 * plan["depth"] - 1.5, 1),
+            "clearance_mm": clearance,
+        }
+        conn.update(report_extra)
+        conns.append(conn)
+    return kids, removed_total, conns, None
+
+
+def _local_split(M, spec, n, d, near, faces):
+    """Schnitt nur durch die Schnittflaeche, die dem Klickpunkt am naechsten liegt (z. B. nur der Arm).
+
+    Gibt (Kinder, Seiten, Gruppen) zurueck oder None, wenn der Querschnitt nur aus einer Flaeche besteht."""
+    polys, _ = _section_polys(M, spec)
+    groups = _groups(polys)
+    if len(groups) < 2:
+        return None
+    if spec[0] == "axis":
+        q = np.array(_view_uv(spec[1], near), dtype=float)
+    else:
+        q = (spec[1] @ np.asarray(near, dtype=float))[:2]
+    g = min(groups, key=lambda gr: _dist_to_polys(q, _group_polys(gr)))
+    cp, _ = _pole(_group_polys(g))
+    if cp is None:
+        return None
+    full = _split_free(M, faces, n, d) if spec[0] == "free" else _split_piece(M, faces, spec[1], d)
+    hit = {}
+    for comp, fc in full:
+        side = _side_of(comp, n, d)
+        if side is None:
+            continue
+        pos = d - 0.3 if side == "below" else d + 0.3
+        cs = _slice_free(comp, spec[1], pos) if spec[0] == "free" else _axis_view(comp, spec[1]).slice(float(pos))
+        if _point_in_polys(cp, _polys_of(cs)):
+            hit[side] = (comp, fc)
+    if len(hit) < 2:
+        return None
+    small_side = min(hit, key=lambda k: float(hit[k][0].volume()))
+    small = hit[small_side]
+    big_side = "above" if small_side == "below" else "below"
+    rest_faces = hit[big_side][1]
+    rest = hit[big_side][0]
+    for comp, fc in full:
+        if comp is small[0] or comp is hit[big_side][0]:
+            continue
+        rest = rest + comp
+    return [small, (rest, rest_faces)], [small_side, big_side], [g]
 
 
 def _split_free(M, faces, n, d):
@@ -535,19 +687,17 @@ def _plan_dowel(first, polys_uv, n, d, frame_back, cfg):
     return {"center": [float(x) for x in center], "radius": float(r), "depth": float(depth), "rmax": float(rmax)}, None
 
 
-def _punch(children, n, d, plan, clearance):
+def _punch(children, n, d, plan, clearance, sides=None):
     """Loch in beide Kinder (unter/ueber der Ebene) bohren; liefert (neue Kinder, entferntes Volumen)."""
     c = np.asarray(plan["center"])
     rh = plan["radius"] + clearance / 2.0
     L = plan["depth"]
     out, removed = [], 0.0
-    for comp, faces in children:
-        lo, hi = _bounds(comp)
-        corners = np.array([[x, y, z] for x in (lo[0], hi[0]) for y in (lo[1], hi[1]) for z in (lo[2], hi[2])])
-        sd = corners @ n - d
-        if sd.max() <= 0.5 and sd.min() < -0.5:       # Teil liegt unter der Ebene
+    for ci, (comp, faces) in enumerate(children):
+        side = sides[ci] if sides else _side_of(comp, n, d)
+        if side == "below":       # Teil liegt unter der Ebene
             cyl = _cylinder(c, n, L, 0.5, rh)
-        elif sd.min() >= -0.5 and sd.max() > 0.5:     # Teil liegt ueber der Ebene
+        elif side == "above":     # Teil liegt ueber der Ebene
             cyl = _cylinder(c, n, 0.5, L, rh)
         else:
             out.append((comp, faces))
@@ -648,10 +798,10 @@ def split_mesh(path, params, progress=None):
             kids = _split_piece(M, faces, axis, pos)
             nvec = np.zeros(3)
             nvec[axis] = 1.0
-            kids, rem, conn, why = _connect(M, ("axis", axis, pos), nvec, pos, kids, cfg, {"cut": len(cuts)})
+            kids, rem, conns, why = _connect(M, ("axis", axis, pos), nvec, pos, kids, cfg, {"cut": len(cuts)})
             removed_total += rem
-            if conn:
-                connectors.append(conn)
+            if conns:
+                connectors.extend(conns)
             elif why:
                 warnings.append(f"Schnitt {len(cuts)}: {why}, kein Duebel")
             for item in kids:
@@ -713,6 +863,9 @@ def split_mesh(path, params, progress=None):
                 continue
             if len(done) + len(sel) > MAX_PARTS:
                 raise PlanError(f"Mehr als {MAX_PARTS} Teile - Schnittliste pruefen")
+            spec = ("free", R, pos) if is_free else ("axis", axis, pos)
+            nvec_l = nrm if is_free else np.eye(3)[axis]
+            local = _local_split(done[sel[0]][0], spec, nvec_l, pos, near, done[sel[0]][1]) if (near and len(sel) == 1) else None
             area_sum, contours_sum = 0.0, 0
             for i in sel:
                 cs = _slice_free(done[i][0], R, pos) if is_free else _axis_view(done[i][0], axis).slice(float(pos))
@@ -723,7 +876,13 @@ def split_mesh(path, params, progress=None):
             new_anchor = anchor
             if not is_free and not (anchor and len(anchor) == 2 and _contains_anchor(first, axis, pos, anchor)):
                 new_anchor = _interior_point(_axis_view(first, axis).slice(float(pos)))
-            spec = ("free", R, pos) if is_free else ("axis", axis, pos)
+            section = _section_3d(first, spec)
+            if local:
+                gp = [p for g in local[2] for p in _group_polys(g)]
+                _, to3 = _section_polys(first, spec)
+                section = [[[round(float(c), 2) for c in to3(u, v)] for u, v in _decimate(p)] for p in gp]
+                area_sum = sum(_group_area(g) for g in local[2])
+                contours_sum = len(gp)
             cuts.append({
                 **base,
                 "area_mm2": round(area_sum, 1),
@@ -731,22 +890,28 @@ def split_mesh(path, params, progress=None):
                 "part_extents_mm": [round(float(x), 1) for x in (first_ext[1] - first_ext[0])],
                 "anchor": new_anchor,
                 "pieces_cut": len(sel),
-                "section": _section_3d(first, spec),
+                "section": section,
+                "local": bool(local),
             })
             new_done = []
             for i, (M, faces) in enumerate(done):
                 if i in sel:
-                    kids = _split_free(M, faces, nrm, pos) if is_free else _split_piece(M, faces, axis, pos)
+                    sides = None
+                    groups = None
+                    if local:
+                        kids, sides, groups = local
+                    else:
+                        kids = _split_free(M, faces, nrm, pos) if is_free else _split_piece(M, faces, axis, pos)
                     if len(sel) == 1:
                         if is_free:
                             nvec = nrm
                         else:
                             nvec = np.zeros(3)
                             nvec[axis] = 1.0
-                        kids, rem, conn, why = _connect(M, spec, nvec, pos, kids, _cut_cfg(cfg, c.get("dowel_mm")), {"cut": len(cuts)})
+                        kids, rem, conns, why = _connect(M, spec, nvec, pos, kids, _cut_cfg(cfg, c.get("dowel_mm")), {"cut": len(cuts)}, groups, sides)
                         removed_total += rem
-                        if conn:
-                            connectors.append(conn)
+                        if conns:
+                            connectors.extend(conns)
                         elif why:
                             warnings.append(f"Schnitt {len(cuts)}: {why}, kein Duebel")
                     new_done.extend(kids)
@@ -809,11 +974,16 @@ def split_mesh(path, params, progress=None):
         all_fit = all(
             all(sorted(r["extents_mm"])[i] <= sorted(bed)[i] + 0.2 for i in range(3)) for r in part_reports
         )
-        for k, cn in enumerate(connectors, 1):
-            cyl = trimesh.creation.cylinder(radius=cn["diameter_mm"] / 2.0, height=cn["dowel_length_mm"], sections=48)
-            cyl.vertices -= cyl.bounds[0]
-            zf.writestr(f"Duebel-{k:02d}.stl", trimesh.exchange.stl.export_stl(cyl))
-            cn["name"] = f"Duebel-{k:02d}"
+        dowel_files = {}
+        for cn in connectors:
+            key = (cn["diameter_mm"], cn["dowel_length_mm"])
+            if key not in dowel_files:
+                k = len(dowel_files) + 1
+                cyl = trimesh.creation.cylinder(radius=cn["diameter_mm"] / 2.0, height=cn["dowel_length_mm"], sections=48)
+                cyl.vertices -= cyl.bounds[0]
+                zf.writestr(f"Duebel-{k:02d}.stl", trimesh.exchange.stl.export_stl(cyl))
+                dowel_files[key] = f"Duebel-{k:02d}"
+            cn["name"] = dowel_files[key]
         if diff > 1e-4:
             warnings.append(f"Volumensumme weicht um {diff * 100:.3f} % vom Original ab - Ergebnis pruefen")
         tiny = sum(1 for r in part_reports if r["tiny"])

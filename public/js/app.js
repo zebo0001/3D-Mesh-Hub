@@ -883,7 +883,11 @@ return `<tr data-i="${i}" class="${i === activeCut ? 'cut-active' : ''}"><td>${i
 <td>${range}</td><td><input type="number" class="cut-dw-in" min="0" max="40" step="1" placeholder="${autoD(i)}" value="${c.dowel_mm == null ? '' : c.dowel_mm}" title="${t('split.cutDowelTitle')}"></td><td><button type="button" class="cut-btn" data-act="remove" title="${t('split.cutRemove')}">✕</button></td></tr>`;
 }).join('');
 box.innerHTML = `<h4 class="mesh-sub">${t('split.cutsTitle')}</h4>
-<div class="mesh-actions"><button type="button" class="btn-secondary" id="sp-editor">${t('split.cutEditor')}</button></div><p class="hint">${t('split.cutsHint')}</p>
+<div class="mesh-actions"><button type="button" class="btn-secondary" id="sp-editor">${t('split.cutEditor')}</button></div>
+<div class="cut-bed"><label>${t('split.printer')} <select id="sp-ed-printer">${[...printerSel.options].map((o) => `<option value="${o.value}"${o.value === printerSel.value ? ' selected' : ''}>${escapeHtml(o.textContent)}</option>`).join('')}</select></label>
+<span class="cut-bed-custom" ${printerSel.value === 'custom' ? '' : 'hidden'}>X <input type="number" id="sp-ed-bx" min="50" max="2000" value="${q('sp-bx').value}"> Y <input type="number" id="sp-ed-by" min="50" max="2000" value="${q('sp-by').value}"> Z <input type="number" id="sp-ed-bz" min="50" max="2000" value="${q('sp-bz').value}"></span>
+<div class="hint" id="sp-ed-bedinfo"></div></div>
+<p class="hint">${t('split.cutsHint')}</p>
 <table class="mesh-table"><tr><th>#</th><th>${t('split.cutColAxis')}</th><th>${t('split.cutColPos')}</th><th>${t('split.cutColRange')}</th><th>${t('split.cutColDowel')}</th><th></th></tr>${rows}</table>
 <div class="cut-draw"><button type="button" class="cut-btn cut-line-btn" data-act="line">${t('split.cutLine')}</button></div>
 <div class="cut-add"><select id="sp-add-axis"><option value="x">X</option><option value="y">Y</option><option value="z">Z</option></select>
@@ -894,6 +898,17 @@ box.innerHTML = `<h4 class="mesh-sub">${t('split.cutsTitle')}</h4>
 <table class="mesh-table cut-parts-table"><tr><th>${t('split.colPart')}</th><th>${t('split.colSize')}</th><th>${t('split.colVol')}</th></tr>${(lastReport.parts || []).map((p, i) => `<tr data-part="${i}"><td><span class="part-sw" style="background:${PART_COLORS[i % PART_COLORS.length]}"></span>${escapeHtml(p.name)}${p.tiny ? ' ⚠' : ''}</td><td class="${p.fits === false ? 'nofit' : ''}">${p.extents_mm.map(n1).join(' × ')}</td><td>${n1(p.volume_cm3)}</td></tr>`).join('')}</table></div>
 <div class="mesh-actions"><button type="button" class="btn-secondary" id="sp-recalc">${t('split.cutRecalc')}</button>
 <button type="button" class="btn-secondary" id="sp-reset">${t('split.cutReset')}</button></div>`;
+updateBedInfo();
+};
+const updateBedInfo = () => {
+const el = q('sp-ed-bedinfo');
+if (!el || !lastReport) return;
+const inp = readInput();
+const m = inp.margin_mm;
+const bed = [inp.bed.x - 2 * m, inp.bed.y - 2 * m, inp.bed.z - 2 * m].sort((x, y) => x - y);
+const bad = (lastReport.parts || []).filter((p) => { const e = [...p.extents_mm].sort((x, y) => x - y); return e.some((v, k) => v > bed[k] + 0.2); }).length;
+el.textContent = t('split.cutBedInfo', { x: n1(inp.bed.x - 2 * m), y: n1(inp.bed.y - 2 * m), z: n1(inp.bed.z - 2 * m) }) + (bad ? ' – ' + t('split.cutBedBad', { n: bad }) : '');
+el.className = bad ? 'mesh-warn' : 'hint';
 };
 const rowIndex = (el) => { const tr = el.closest('tr[data-i]'); return tr ? Number(tr.dataset.i) : -1; };
 const setActive = (i) => {
@@ -1069,6 +1084,8 @@ else if (b.id === 'sp-reset') recompute(false);
 });
 document.addEventListener('input', (ev) => {
 if (!alive() || !ev.target.closest || !ev.target.closest('#sp-cuts')) return;
+if (ev.target.id === 'sp-ed-printer') { printerSel.value = ev.target.value; syncCustom(); remember(); dirty = true; leaveParts(); renderCuts(); return; }
+if (['sp-ed-bx', 'sp-ed-by', 'sp-ed-bz'].includes(ev.target.id)) { q(ev.target.id.replace('-ed', '')).value = ev.target.value; remember(); dirty = true; updateBedInfo(); return; }
 if (ev.target.id === 'sp-explode') { explode = Number(ev.target.value); setExplode(explode); return; }
 if (ev.target.classList.contains('cut-dw-in') && cutsEdit) {
 const i = rowIndex(ev.target);

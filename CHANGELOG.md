@@ -3,6 +3,16 @@
 Alle nennenswerten Aenderungen an 3D Mesh Hub werden hier dokumentiert.
 Das Projekt folgt [Semantic Versioning](https://semver.org/lang/de/) (MAJOR.MINOR.PATCH).
 
+## [1.14.0] - 2026-11-15
+
+### Geaendert
+- Aufteilen: Ein per Klick gesetzter Schnitt trennt nur die angeklickte zusammenhaengende Schnittflaeche (z. B. nur den Arm). Trifft die Ebene im selben Teil weitere Stellen des Koerpers, bleiben diese ungeschnitten und das Material wird wieder zusammengefuegt. Der Umriss im Viewer zeigt nur diese Flaeche.
+- Duebel: je zusammenhaengender Schnittflaeche mindestens einer (z. B. beide Beine), bei grossen Flaechen mehrere (hoechstens 5, Abstand mindestens 3,2 Radien, Randabstand). In der ZIP liegt je Groesse eine `Duebel-NN.stl`, so oft drucken, wie Duebel eingeplant sind.
+- Seitenbestimmung der Teile (fuer Duebellocher) jetzt ueber die Eckpunkte statt die Bounding-Box; bei schraegen Schnitten wurden Loecher sonst teils nicht gebohrt.
+
+### Hinzugefuegt
+- Schnitt-Editor: Druckerauswahl (Kobra X, Kobra 3 Max, andere, eigene Masse) mit Anzeige des nutzbaren Betts und Warnung, wie viele Teile nicht passen. Gilt fuer "Mit diesen Schnitten neu berechnen" und "Automatischen Vorschlag neu erzeugen".
+
 ## [1.13.1] - 2026-11-15
 
 ### Behoben

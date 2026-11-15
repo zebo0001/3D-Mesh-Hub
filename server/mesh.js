@@ -98,6 +98,7 @@ function validateCuts(raw) {
     const cut = { axis, position_mm: pos };
     if (Array.isArray(c.anchor) && c.anchor.length === 2 && c.anchor.every(finite)) cut.anchor = c.anchor;
     if (Array.isArray(c.region_mm) && c.region_mm.length === 6 && c.region_mm.every(finite)) cut.region_mm = c.region_mm;
+    if (Array.isArray(c.near) && c.near.length === 3 && c.near.every(finite)) cut.near = c.near;
     cuts.push(cut);
   }
   return { cuts };

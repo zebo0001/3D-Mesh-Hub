@@ -3,6 +3,11 @@
 Alle nennenswerten Aenderungen an 3D Mesh Hub werden hier dokumentiert.
 Das Projekt folgt [Semantic Versioning](https://semver.org/lang/de/) (MAJOR.MINOR.PATCH).
 
+## [1.11.1] - 2026-11-15
+
+### Hinzugefuegt
+- Aufteilen: Schnitte einzeichnen. "Schnitt einzeichnen" (waagerecht/senkrecht je Achse) und das Fadenkreuz pro Zeile setzen einen Schnitt per Klick auf die Figur im 3D-Viewer. Der Klickpunkt (`near`) bestimmt, welches Teil geschnitten wird: nur das angeklickte, nicht jedes Teil, das die Ebene kreuzt. Esc bricht das Einzeichnen ab.
+
 ## [1.11.0] - 2026-11-15
 
 ### Hinzugefuegt

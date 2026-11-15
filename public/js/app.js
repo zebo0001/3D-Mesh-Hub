@@ -1,4 +1,4 @@
-import { loadIntoViewer, setUnitScale, setMeasureMode, clearMeasure, setSection, setShading, setModelColor, setView, setBed, BED_PRESETS, setCutPlanes, clearCutPlanes } from './viewer.js';
+import { loadIntoViewer, setUnitScale, setMeasureMode, clearMeasure, setSection, setShading, setModelColor, setView, setBed, BED_PRESETS, setCutPlanes, clearCutPlanes, setCutPickMode } from './viewer.js';
 import { t, getLang, setLang, applyStaticTranslations, localeTag, sortLocale } from './i18n.js';
 
 const gridEl = document.getElementById('grid');
@@ -826,12 +826,14 @@ const range = ext[a] != null ? `0 – ${n1(ext[a])}` : '';
 return `<tr data-i="${i}" class="${i === activeCut ? 'cut-active' : ''}"><td>${i + 1}</td><td>${c.axis.toUpperCase()}</td>
 <td class="cut-pos"><button type="button" class="cut-btn" data-act="minus" title="${t('split.cutMinus')}">−5</button>
 <input type="number" class="cut-pos-in" step="1" value="${c.position_mm}">
-<button type="button" class="cut-btn" data-act="plus" title="${t('split.cutPlus')}">+5</button></td>
+<button type="button" class="cut-btn" data-act="plus" title="${t('split.cutPlus')}">+5</button>
+<button type="button" class="cut-btn" data-act="pick" title="${t('split.cutPickRow')}">⌖</button></td>
 <td>${range}</td><td><button type="button" class="cut-btn" data-act="remove" title="${t('split.cutRemove')}">✕</button></td></tr>`;
 }).join('');
 box.innerHTML = `<h4 class="mesh-sub">${t('split.cutsTitle')}</h4>
 <div class="mesh-actions"><button type="button" class="btn-secondary" id="sp-editor">${t('split.cutEditor')}</button></div><p class="hint">${t('split.cutsHint')}</p>
 <table class="mesh-table"><tr><th>#</th><th>${t('split.cutColAxis')}</th><th>${t('split.cutColPos')}</th><th>${t('split.cutColRange')}</th><th></th></tr>${rows}</table>
+<div class="cut-draw"><span>${t('split.cutDraw')}</span>${AX.map((a) => `<button type="button" class="cut-btn" data-act="draw" data-axis="${a}">${a === (lastReport.up_axis || 'y') ? t('split.cutDrawHoriz', { axis: a.toUpperCase() }) : t('split.cutDrawVert', { axis: a.toUpperCase() })}</button>`).join('')}</div>
 <div class="cut-add"><select id="sp-add-axis"><option value="x">X</option><option value="y">Y</option><option value="z">Z</option></select>
 <input type="number" id="sp-add-pos" step="1" placeholder="mm">
 <button type="button" class="cut-btn" id="sp-add">${t('split.cutAdd')}</button></div>
@@ -899,6 +901,44 @@ document.body.classList.remove('cut-editor-open');
 pokeResize();
 };
 document.addEventListener('keydown', (ev) => { if (ev.key === 'Escape' && editorOpen && alive()) closeEditor(); });
+// ---- Einzeichnen: Klick auf die Figur setzt (oder verschiebt) einen Schnitt ----
+let pickBanner = null;
+const endPick = () => {
+setCutPickMode(null);
+if (pickBanner) { pickBanner.remove(); pickBanner = null; }
+};
+const startPick = (axis, rowIndex) => {
+endPick();
+const shell = shellEl();
+if (shell) {
+pickBanner = document.createElement('div');
+pickBanner.className = 'cut-pick-banner';
+pickBanner.textContent = t('split.cutPickBanner', { axis: axis.toUpperCase() });
+shell.appendChild(pickBanner);
+}
+setCutPickMode((p) => {
+const o = lastReport && lastReport.origin_mm;
+const sc = Number(lastReport && lastReport.scale);
+if (!Array.isArray(o) || !(sc > 0) || !cutsEdit) { endPick(); return; }
+const a = AX.indexOf(axis);
+const near = [0, 1, 2].map((k) => Math.round((p[k] - o[k]) * sc * 100) / 100);
+const pos = near[a];
+if (rowIndex >= 0 && cutsEdit[rowIndex]) {
+cutsEdit[rowIndex].position_mm = pos;
+cutsEdit[rowIndex].near = near;
+activeCut = rowIndex;
+} else {
+cutsEdit.push({ axis, position_mm: pos, anchor: null, region_mm: null, near });
+activeCut = cutsEdit.length - 1;
+}
+endPick();
+renderCuts();
+drawPlates();
+});
+};
+document.addEventListener('keydown', (ev) => {
+if (ev.key === 'Escape' && pickBanner && alive()) { ev.stopImmediatePropagation(); endPick(); }
+}, true);
 const recompute = async (withCuts) => {
 const input = readInput();
 const nums = [input.bed.x, input.bed.y, input.bed.z, input.margin_mm, input.target_height_mm];
@@ -909,6 +949,7 @@ input.cuts = cutsEdit.map((c) => {
 const o = { axis: c.axis, position_mm: Number(c.position_mm) };
 if (Array.isArray(c.anchor)) o.anchor = c.anchor;
 if (Array.isArray(c.region_mm)) o.region_mm = c.region_mm;
+if (Array.isArray(c.near)) o.near = c.near;
 return o;
 });
 }
@@ -938,7 +979,9 @@ cutsEdit.push({ axis, position_mm: pos, anchor: null, region_mm: null });
 activeCut = cutsEdit.length - 1;
 renderCuts();
 drawPlates();
-} else if (b.id === 'sp-editor') openEditor();
+} else if (b.dataset.act === 'pick' && i >= 0) startPick(cutsEdit[i].axis, i);
+else if (b.dataset.act === 'draw') startPick(b.dataset.axis, -1);
+else if (b.id === 'sp-editor') openEditor();
 else if (b.id === 'sp-editor-close') closeEditor();
 else if (b.id === 'sp-recalc') recompute(true);
 else if (b.id === 'sp-reset') recompute(false);
@@ -969,7 +1012,7 @@ if (running) {
 resultEl.innerHTML = `<div class="hint">${t('split.running')}${st.progress ? ' – ' + escapeHtml(st.progress) : ''}</div>`;
 } else if (st.state === 'done') {
 lastReport = st.report || {};
-cutsEdit = (lastReport.cuts || []).map((c) => ({ axis: c.axis, position_mm: c.position_mm, anchor: c.anchor || null, region_mm: c.region_mm || null }));
+cutsEdit = (lastReport.cuts || []).map((c) => ({ axis: c.axis, position_mm: c.position_mm, anchor: c.anchor || null, region_mm: c.region_mm || null, near: c.near || null }));
 activeCut = -1;
 resultEl.innerHTML = reportHtml(lastReport, st.download_url);
 renderCuts();

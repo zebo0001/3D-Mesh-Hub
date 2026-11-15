@@ -48,6 +48,7 @@ let measurePts = [];
 let measureObjs = [];
 let measureLabelEl = null;
 let modelBox = null;
+let cutPick = null; // Rueckruf im Einzeichnen-Modus
 let cutGroup = null; // Schnittebenen-Platten (Kind des Modells, erbt dessen Z-up-Drehung)
 const sectionPlane = new THREE.Plane(new THREE.Vector3(1, 0, 0), 0);
 let sectionOn = false;
@@ -100,8 +101,17 @@ function ensureScene() {
   let downX = 0, downY = 0;
   renderer.domElement.addEventListener('pointerdown', (ev) => { downX = ev.clientX; downY = ev.clientY; });
   renderer.domElement.addEventListener('pointerup', (ev) => {
-    if (!measureOn) return;
+    if (!measureOn && !cutPick) return;
     if (Math.hypot(ev.clientX - downX, ev.clientY - downY) > 5) return;
+    if (cutPick) {
+      const h = raycastModel(ev);
+      if (h && currentMesh) {
+        const lp = currentMesh.worldToLocal(h.point.clone());
+        const cb = cutPick;
+        cb([lp.x, lp.y, lp.z]);
+      }
+      return;
+    }
     pickPoint(ev);
   });
 
@@ -166,6 +176,8 @@ function clearCurrent() {
   bedOn = false;
   rebuildBed();
   cutGroup = null;
+  cutPick = null;
+  if (renderer) renderer.domElement.style.cursor = '';
   if (currentMesh) {
     scene.remove(currentMesh);
     currentMesh = null;
@@ -416,17 +428,27 @@ export function clearMeasure() {
   showLabel(measureOn ? t('measure.first') : '');
 }
 
-function pickPoint(ev) {
-  if (!currentMesh || !modelBox) return;
+function raycastModel(ev) {
+  if (!currentMesh || !modelBox) return null;
   const rect = renderer.domElement.getBoundingClientRect();
   const ndc = new THREE.Vector2(((ev.clientX - rect.left) / rect.width) * 2 - 1, -((ev.clientY - rect.top) / rect.height) * 2 + 1);
   raycaster.setFromCamera(ndc, camera);
-  let hit = null;
   for (const h of raycaster.intersectObjects(meshList(), false)) {
     // weggeschnittene Teile duerfen nicht treffen (Clipping wirkt nur beim Zeichnen)
     if (sectionOn && sectionPlane.distanceToPoint(h.point) < 0) continue;
-    hit = h; break;
+    return h;
   }
+  return null;
+}
+
+// Einzeichnen von Schnitten: Klick (kein Ziehen) auf das Modell ruft cb([x,y,z]) in Dateikoordinaten.
+export function setCutPickMode(cb) {
+  cutPick = typeof cb === 'function' ? cb : null;
+  if (renderer) renderer.domElement.style.cursor = cutPick ? 'crosshair' : '';
+}
+
+function pickPoint(ev) {
+  const hit = raycastModel(ev);
   if (!hit) return;
   if (measurePts.length >= 2) clearMeasure();
 

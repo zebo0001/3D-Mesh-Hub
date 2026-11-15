@@ -212,6 +212,36 @@ def _contains_anchor(M, axis, pos, anchor):
     return _point_in_polys(anchor, polys)
 
 
+def _view_uv(axis, p):
+    """Punkt (x,y,z) in die 2D-Koordinaten von _axis_view(M, axis) umrechnen."""
+    x, y, z = float(p[0]), float(p[1]), float(p[2])
+    if axis == 2:
+        return (x, y)
+    if axis == 1:
+        return (x, -z)
+    return (-z, y)
+
+
+def _dist_to_slice(M, axis, pos, point):
+    """Abstand eines Punktes (in der Schnittebene betrachtet) zum Querschnitt; 0 wenn innen."""
+    cs = _axis_view(M, axis).slice(float(pos))
+    polys = [np.asarray(p, dtype=float) for p in cs.to_polygons() if len(p) >= 3]
+    if not polys:
+        return float("inf")
+    q = np.array(_view_uv(axis, point), dtype=float)
+    if _point_in_polys(q, polys):
+        return 0.0
+    best = float("inf")
+    for p in polys:
+        a, b = p, np.roll(p, -1, axis=0)
+        ab = b - a
+        denom = np.maximum((ab * ab).sum(axis=1), 1e-12)
+        t = np.clip(((q - a) * ab).sum(axis=1) / denom, 0.0, 1.0)
+        d = np.hypot(*(a + ab * t[:, None] - q).T)
+        best = min(best, float(d.min()))
+    return best
+
+
 def _split_piece(M, faces, axis, pos):
     """Teilt ein Stueck an der Ebene; liefert Liste neuer (Manifold, Schnittflaechen)."""
     normal = [0.0, 0.0, 0.0]
@@ -332,7 +362,12 @@ def split_mesh(path, params, progress=None):
                     continue
                 cand.append(idx)
             sel = []
-            if anchor and len(anchor) == 2:
+            near = c.get("near")
+            if near and len(near) == 3 and cand:
+                # Klick auf die Figur: nur das Teil schneiden, dessen Querschnitt dem Klickpunkt am naechsten liegt
+                dists = [(_dist_to_slice(done[i][0], axis, pos, near), i) for i in cand]
+                sel = [min(dists)[1]]
+            elif anchor and len(anchor) == 2:
                 sel = [i for i in cand if _contains_anchor(done[i][0], axis, pos, anchor)]
             if not sel and region and len(region) == 6:
                 for i in cand:
@@ -351,7 +386,7 @@ def split_mesh(path, params, progress=None):
                 warnings.append(f"Schnitt {ci} ({AXIS_NAMES[axis]} = {pos:.1f} mm) trifft kein Teil und wurde ignoriert")
                 cuts.append({"axis": AXIS_NAMES[axis], "position_mm": round(pos, 2), "area_mm2": 0.0,
                              "contours": 0, "part_extents_mm": [], "anchor": anchor, "region_mm": region,
-                             "pieces_cut": 0})
+                             "near": near if near and len(near) == 3 else None, "pieces_cut": 0})
                 continue
             if len(done) + len(sel) > MAX_PARTS:
                 raise PlanError(f"Mehr als {MAX_PARTS} Teile - Schnittliste pruefen")
@@ -367,6 +402,7 @@ def split_mesh(path, params, progress=None):
                 "part_extents_mm": [round(float(x), 1) for x in (first_ext[1] - first_ext[0])],
                 "anchor": new_anchor,
                 "region_mm": region,
+                "near": near if near and len(near) == 3 else None,
                 "pieces_cut": len(sel),
             })
             new_done = []

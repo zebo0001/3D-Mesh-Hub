@@ -3,6 +3,15 @@
 Alle nennenswerten Aenderungen an 3D Mesh Hub werden hier dokumentiert.
 Das Projekt folgt [Semantic Versioning](https://semver.org/lang/de/) (MAJOR.MINOR.PATCH).
 
+## [1.12.0] - 2026-11-15
+
+### Hinzugefuegt
+- Aufteilen: freie (schraege) Schnitte. "Schnittlinie ziehen": zwei Klicks auf die Figur, die Ebene geht durch die Linie in Blickrichtung und trifft nur das angeklickte Teil (STL-Buddy-Prinzip). Liegt die Ebene bis auf 4 Grad an einer Achse, wird sie zum Achsschnitt. Im Planer neuer Schnitttyp `free` mit `normal` und Versatz.
+- Teile mit schraeger Schnittflaeche werden mit der Flaeche nach unten gedreht und um Z gedreht, bis sie aufs Bett passen.
+- Duebel: an jedem Schnitt Loch in beiden Teilen (Sitz mit festem Spiel in mm, nicht mitskaliert) und ein loser Duebel als STL in der ZIP. Durchmesser automatisch (halber Abstand zum Rand, hoechstens 12 mm) oder fest, Tiefe und Spiel einstellbar. Im Viewer gruen dargestellt. Ungetestet im Druck.
+- Viewer: Schnittumriss (exakter Querschnitt) statt grosser Platte, sobald berechnet.
+- Planer meldet pro Schnitt den Querschnitt (`section`) und die Duebel (`connectors`); die Volumenpruefung rechnet die Loecher ein.
+
 ## [1.11.1] - 2026-11-15
 
 ### Hinzugefuegt

@@ -105,11 +105,7 @@ function ensureScene() {
     if (Math.hypot(ev.clientX - downX, ev.clientY - downY) > 5) return;
     if (cutPick) {
       const h = raycastModel(ev);
-      if (h && currentMesh) {
-        const lp = currentMesh.worldToLocal(h.point.clone());
-        const cb = cutPick;
-        cb([lp.x, lp.y, lp.z]);
-      }
+      if (h && currentMesh) handleCutClick(currentMesh.worldToLocal(h.point.clone()));
       return;
     }
     pickPoint(ev);
@@ -176,6 +172,7 @@ function clearCurrent() {
   bedOn = false;
   rebuildBed();
   cutGroup = null;
+  clearLineMarkers();
   cutPick = null;
   if (renderer) renderer.domElement.style.cursor = '';
   if (currentMesh) {
@@ -441,10 +438,77 @@ function raycastModel(ev) {
   return null;
 }
 
+// Achse (Dateikoordinaten) fuer einen Schnitt, der in der aktuellen Ansicht senkrecht bzw. waagerecht
+// auf dem Bildschirm erscheint: Normale = Achse, die der Bildschirm-Rechts- bzw. -Oben-Richtung am naechsten liegt.
+export function cutAxisFromView(kind) {
+  if (!camera || !currentMesh) return 'y';
+  camera.updateMatrixWorld();
+  const col = kind === 'horizontal' ? 1 : 0;
+  const dir = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, col);
+  const q = currentMesh.getWorldQuaternion(new THREE.Quaternion()).invert();
+  dir.applyQuaternion(q);
+  const a = [Math.abs(dir.x), Math.abs(dir.y), Math.abs(dir.z)];
+  return ['x', 'y', 'z'][a.indexOf(Math.max(...a))];
+}
+
 // Einzeichnen von Schnitten: Klick (kein Ziehen) auf das Modell ruft cb([x,y,z]) in Dateikoordinaten.
-export function setCutPickMode(cb) {
+// mode 'point': ein Klick -> cb({ point }). mode 'line': zwei Klicks -> cb({ p1, p2, normal, mid }),
+// die Ebene geht durch beide Punkte und in Blickrichtung. onFirst() nach dem ersten Klick.
+let cutPickMode = 'point';
+let cutPickFirst = null;
+let linePts = [];
+let lineMarkers = [];
+function clearLineMarkers() {
+  for (const m of lineMarkers) {
+    if (m.parent) m.parent.remove(m);
+    m.geometry.dispose();
+    m.material.dispose();
+  }
+  lineMarkers = [];
+  linePts = [];
+}
+export function setCutPickMode(cb, mode = 'point', onFirst = null) {
+  clearLineMarkers();
   cutPick = typeof cb === 'function' ? cb : null;
+  cutPickMode = mode;
+  cutPickFirst = onFirst;
   if (renderer) renderer.domElement.style.cursor = cutPick ? 'crosshair' : '';
+}
+
+function handleCutClick(lp) {
+  if (!cutPick) return;
+  if (cutPickMode !== 'line') {
+    const cb = cutPick;
+    cb({ point: [lp.x, lp.y, lp.z] });
+    return;
+  }
+  const size = modelBox ? modelBox.getSize(new THREE.Vector3()) : new THREE.Vector3(1, 1, 1);
+  const r = (Math.max(size.x, size.y, size.z) || 1) * 0.008;
+  const marker = new THREE.Mesh(new THREE.SphereGeometry(r, 12, 12), new THREE.MeshBasicMaterial({ color: 0xffe14a, depthTest: false }));
+  marker.position.copy(lp);
+  marker.renderOrder = 999;
+  marker.userData.cutPlate = true;
+  currentMesh.add(marker);
+  lineMarkers.push(marker);
+  linePts.push(lp.clone());
+  if (linePts.length === 1) {
+    if (cutPickFirst) cutPickFirst();
+    return;
+  }
+  const [p1, p2] = linePts;
+  camera.updateMatrixWorld();
+  const dirW = camera.getWorldDirection(new THREE.Vector3());
+  const dir = dirW.applyQuaternion(currentMesh.getWorldQuaternion(new THREE.Quaternion()).invert());
+  const normal = new THREE.Vector3().subVectors(p2, p1).cross(dir);
+  const cb = cutPick;
+  if (normal.length() < 1e-6 * (p1.distanceTo(p2) + 1e-9) || p1.distanceTo(p2) < r) {
+    clearLineMarkers();   // Linie ohne Ausdehnung oder parallel zur Blickrichtung: von vorn beginnen
+    return;
+  }
+  normal.normalize();
+  const mid = new THREE.Vector3().addVectors(p1, p2).multiplyScalar(0.5);
+  clearLineMarkers();
+  cb({ p1: p1.toArray(), p2: p2.toArray(), normal: normal.toArray(), mid: mid.toArray() });
 }
 
 function pickPoint(ev) {
@@ -545,45 +609,94 @@ export function clearCutPlanes() {
   cutGroup = null;
 }
 
-// planes: [{ axis: 'x'|'y'|'z', pos (Dateikoordinate), region?: [x0,y0,z0,x1,y1,z1] (Datei), active?: bool }]
-export function setCutPlanes(planes) {
+// planes: [{ axis: 'x'|'y'|'z'|'free', pos (axis: Koordinate, free: Punkt [x,y,z]), normal ('free'),
+//   region?: [x0,y0,z0,x1,y1,z1], outline?: [[ [x,y,z]... ]], size?, active?: bool }] - alles in Dateikoordinaten.
+// connectors: [{ center:[x,y,z], normal:[x,y,z], radius, length }] (gruene Duebel)
+export function setCutPlanes(planes, connectors = []) {
   clearCutPlanes();
-  if (!currentMesh || !Array.isArray(planes) || !planes.length) return;
+  if (!currentMesh || !Array.isArray(planes) || (!planes.length && !connectors.length)) return;
   const box = localBox();
   if (box.isEmpty()) return;
   cutGroup = new THREE.Group();
+  const Z = new THREE.Vector3(0, 0, 1);
   for (const p of planes) {
-    const a = { x: 0, y: 1, z: 2 }[p.axis];
-    if (a === undefined || !Number.isFinite(p.pos)) continue;
-    const lo = box.min.toArray();
-    const hi = box.max.toArray();
-    if (Array.isArray(p.region) && p.region.length === 6 && p.region.every(Number.isFinite)) {
-      for (let k = 0; k < 3; k++) { lo[k] = p.region[k]; hi[k] = p.region[3 + k]; }
+    let n;
+    let point;
+    if (p.axis === 'free') {
+      if (!Array.isArray(p.normal) || !Array.isArray(p.pos)) continue;
+      n = new THREE.Vector3(...p.normal).normalize();
+      point = new THREE.Vector3(...p.pos);
+    } else {
+      const a = { x: 0, y: 1, z: 2 }[p.axis];
+      if (a === undefined || !Number.isFinite(p.pos)) continue;
+      n = new THREE.Vector3();
+      n.setComponent(a, 1);
+      point = box.getCenter(new THREE.Vector3());
+      point.setComponent(a, p.pos);
     }
-    const others = [0, 1, 2].filter((k) => k !== a);
-    const pad = 0.03;
-    const w = (hi[others[0]] - lo[others[0]]) * (1 + 2 * pad);
-    const h = (hi[others[1]] - lo[others[1]]) * (1 + 2 * pad);
-    if (!(w > 0 && h > 0)) continue;
-    // Plane liegt zunaechst in XY (Normale +Z); Achsen so abbilden, dass u/v den "others" entsprechen
-    const geo = new THREE.PlaneGeometry(w, h);
-    if (a === 0) geo.rotateY(Math.PI / 2); // Normale +X: Breite -> Z, Hoehe -> Y
-    if (a === 1) geo.rotateX(-Math.PI / 2); // Normale +Y: Breite -> X, Hoehe -> Z
+    const q = new THREE.Quaternion().setFromUnitVectors(Z, n);
+    const u = new THREE.Vector3(1, 0, 0).applyQuaternion(q);
+    const w = new THREE.Vector3(0, 1, 0).applyQuaternion(q);
+    // Punkte, deren Ausdehnung die Plattengroesse bestimmt
+    const pts = [];
+    const hasOutline = Array.isArray(p.outline) && p.outline.length > 0;
+    if (hasOutline) {
+      for (const poly of p.outline) for (const c of poly) pts.push(new THREE.Vector3(...c));
+    } else if (Array.isArray(p.region) && p.region.length === 6 && p.region.every(Number.isFinite)) {
+      for (const x of [p.region[0], p.region[3]]) for (const y of [p.region[1], p.region[4]]) for (const z of [p.region[2], p.region[5]]) pts.push(new THREE.Vector3(x, y, z));
+    } else if (p.axis === 'free') {
+      const s = (Number(p.size) || box.getSize(new THREE.Vector3()).length() * 0.15) / 2;
+      for (const [su, sv] of [[1, 1], [1, -1], [-1, 1], [-1, -1]]) pts.push(point.clone().addScaledVector(u, su * s).addScaledVector(w, sv * s));
+    } else {
+      for (const x of [box.min.x, box.max.x]) for (const y of [box.min.y, box.max.y]) for (const z of [box.min.z, box.max.z]) pts.push(new THREE.Vector3(x, y, z));
+    }
+    let u0 = Infinity, u1 = -Infinity, w0 = Infinity, w1 = -Infinity;
+    for (const pt of pts) {
+      const d = pt.clone().sub(point);
+      const du = d.dot(u);
+      const dw = d.dot(w);
+      u0 = Math.min(u0, du); u1 = Math.max(u1, du); w0 = Math.min(w0, dw); w1 = Math.max(w1, dw);
+    }
+    if (!(u1 > u0 && w1 > w0)) continue;
+    const pad = 0.06;
+    const pw = (u1 - u0) * (1 + 2 * pad);
+    const ph = (w1 - w0) * (1 + 2 * pad);
+    const center = point.clone().addScaledVector(u, (u0 + u1) / 2).addScaledVector(w, (w0 + w1) / 2);
     const active = !!p.active;
     const color = active ? 0xffd23f : 0x35d0c0;
+    const geo = new THREE.PlaneGeometry(pw, ph);
     const mat = new THREE.MeshBasicMaterial({
-      color, transparent: true, opacity: active ? 0.38 : 0.2, side: THREE.DoubleSide, depthWrite: false,
+      color, transparent: true, opacity: hasOutline ? (active ? 0.16 : 0.08) : (active ? 0.38 : 0.2), side: THREE.DoubleSide, depthWrite: false,
     });
     const mesh = new THREE.Mesh(geo, mat);
     mesh.userData.cutPlate = true;
-    const edges = new THREE.LineSegments(new THREE.EdgesGeometry(geo), new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.9 }));
+    mesh.quaternion.copy(q);
+    mesh.position.copy(center);
+    mesh.renderOrder = 2;
+    const edges = new THREE.LineSegments(new THREE.EdgesGeometry(geo), new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.6 }));
     edges.userData.cutPlate = true;
     mesh.add(edges);
-    const c = [0, 1, 2].map((k) => (lo[k] + hi[k]) / 2);
-    c[a] = p.pos;
-    mesh.position.set(c[0], c[1], c[2]);
-    mesh.renderOrder = 2;
     cutGroup.add(mesh);
+    if (hasOutline) {
+      for (const poly of p.outline) {
+        const g = new THREE.BufferGeometry().setFromPoints(poly.map((c) => new THREE.Vector3(...c)));
+        const line = new THREE.LineLoop(g, new THREE.LineBasicMaterial({ color, depthTest: false, transparent: true, opacity: 0.95 }));
+        line.userData.cutPlate = true;
+        line.renderOrder = 3;
+        cutGroup.add(line);
+      }
+    }
+  }
+  for (const c of connectors) {
+    if (!Array.isArray(c.center) || !Array.isArray(c.normal) || !(c.radius > 0) || !(c.length > 0)) continue;
+    const geo = new THREE.CylinderGeometry(c.radius, c.radius, c.length, 28);
+    const mat = new THREE.MeshBasicMaterial({ color: 0x6bff6b, transparent: true, opacity: 0.85, depthTest: false });
+    const m = new THREE.Mesh(geo, mat);
+    m.userData.cutPlate = true;
+    m.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), new THREE.Vector3(...c.normal).normalize());
+    m.position.set(...c.center);
+    m.renderOrder = 4;
+    cutGroup.add(m);
   }
   currentMesh.add(cutGroup);
 }

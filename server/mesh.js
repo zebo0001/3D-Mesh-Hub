@@ -92,10 +92,16 @@ function validateCuts(raw) {
   for (let i = 0; i < raw.length; i++) {
     const c = raw[i] || {};
     const axis = String(c.axis || '').toLowerCase();
-    if (!['x', 'y', 'z'].includes(axis)) return { error: `Schnitt ${i + 1}: Achse x, y oder z` };
+    if (!['x', 'y', 'z', 'free'].includes(axis)) return { error: `Schnitt ${i + 1}: Achse x, y, z oder frei` };
     const pos = Number(c.position_mm);
     if (!Number.isFinite(pos) || Math.abs(pos) > 20000) return { error: `Schnitt ${i + 1}: Position ungueltig` };
     const cut = { axis, position_mm: pos };
+    if (axis === 'free') {
+      if (!(Array.isArray(c.normal) && c.normal.length === 3 && c.normal.every(finite) && Math.hypot(...c.normal) > 1e-6)) {
+        return { error: `Schnitt ${i + 1}: Normale der freien Ebene ungueltig` };
+      }
+      cut.normal = c.normal;
+    }
     if (Array.isArray(c.anchor) && c.anchor.length === 2 && c.anchor.every(finite)) cut.anchor = c.anchor;
     if (Array.isArray(c.region_mm) && c.region_mm.length === 6 && c.region_mm.every(finite)) cut.region_mm = c.region_mm;
     if (Array.isArray(c.near) && c.near.length === 3 && c.near.every(finite)) cut.near = c.near;
@@ -117,9 +123,15 @@ function validateSplitParams(body) {
   if (height == null) return { error: 'Zielhoehe: 10 bis 10000 mm' };
   const up = String(b.up_axis || 'auto').toLowerCase();
   if (!['auto', 'x', 'y', 'z'].includes(up)) return { error: 'Oben-Achse ungueltig' };
+  const cn = b.connectors || {};
+  const clearance = cn.clearance_mm === undefined || cn.clearance_mm === '' ? 0.3 : num(cn.clearance_mm, 0, 2);
+  const depth = cn.depth_mm === undefined || cn.depth_mm === '' ? 15 : num(cn.depth_mm, 5, 60);
+  const diam = cn.diameter_mm === undefined || cn.diameter_mm === '' || Number(cn.diameter_mm) === 0 ? 0 : num(cn.diameter_mm, 3, 40);
+  if (clearance == null || depth == null || diam == null) return { error: 'Duebel: Spiel 0 bis 2 mm, Tiefe 5 bis 60 mm, Durchmesser 3 bis 40 mm (0 = automatisch)' };
   const vc = validateCuts(b.cuts);
   if (vc.error) return { error: vc.error };
   const params = { up_axis: up, up_flip: !!b.up_flip, target_height_mm: height, bed: { x, y, z }, margin_mm: margin };
+  params.connectors = { enabled: cn.enabled !== false, clearance_mm: clearance, depth_mm: depth, diameter_mm: diam };
   if (vc.cuts) params.cuts = vc.cuts;
   return { params };
 }

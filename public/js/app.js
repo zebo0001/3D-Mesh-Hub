@@ -733,6 +733,12 @@ return `<div class="split-box"><h4 class="mesh-sub">${t('split.title')}</h4>
 <label>${t('split.height')}<input type="number" id="sp-height" min="10" max="10000" step="10" value="1400"></label>
 <label class="vt-check"><input type="checkbox" id="sp-flip"> ${t('split.flip')}</label>
 </div>
+<div class="split-form">
+<label class="vt-check"><input type="checkbox" id="sp-dw" checked> ${t('split.dowel')}</label>
+<label>${t('split.dowelD')}<input type="number" id="sp-dw-d" min="0" max="40" step="1" value="0"></label>
+<label>${t('split.dowelDepth')}<input type="number" id="sp-dw-depth" min="5" max="60" step="1" value="15"></label>
+<label>${t('split.dowelClear')}<input type="number" id="sp-dw-clear" min="0" max="2" step="0.05" value="0.3"></label>
+</div>
 <div class="mesh-actions"><button type="button" class="btn-secondary" id="sp-start">${t('split.start')}</button></div>
 <div id="sp-result"></div></div>`;
 }
@@ -754,6 +760,16 @@ for (const [id, key] of [['sp-bx', 'bx'], ['sp-by', 'by'], ['sp-bz', 'bz'], ['sp
 if (saved[key] != null && saved[key] !== '') q(id).value = saved[key];
 }
 q('sp-flip').checked = !!saved.flip;
+if (saved.dw != null) q('sp-dw').checked = !!saved.dw;
+for (const [id, key] of [['sp-dw-d', 'dwd'], ['sp-dw-depth', 'dwdepth'], ['sp-dw-clear', 'dwclear']]) {
+if (saved[key] != null && saved[key] !== '') q(id).value = saved[key];
+}
+const readDowel = () => ({
+enabled: q('sp-dw').checked,
+diameter_mm: q('sp-dw-d').value === '' ? 0 : Number(q('sp-dw-d').value),
+depth_mm: q('sp-dw-depth').value === '' ? 15 : Number(q('sp-dw-depth').value),
+clearance_mm: q('sp-dw-clear').value === '' ? 0.3 : Number(q('sp-dw-clear').value),
+});
 const syncCustom = () => { q('sp-custom').hidden = printerSel.value !== 'custom'; };
 printerSel.addEventListener('change', syncCustom);
 syncCustom();
@@ -778,6 +794,7 @@ try {
 localStorage.setItem('meshSplit', JSON.stringify({
 printer: printerSel.value, bx: q('sp-bx').value, by: q('sp-by').value, bz: q('sp-bz').value,
 margin: q('sp-margin').value, height: q('sp-height').value, flip: q('sp-flip').checked,
+dw: q('sp-dw').checked, dwd: q('sp-dw-d').value, dwdepth: q('sp-dw-depth').value, dwclear: q('sp-dw-clear').value,
 }));
 } catch { /* Speicher gesperrt: egal */ }
 };
@@ -792,6 +809,7 @@ const b = r.bed_usable_mm || [];
 return `<div class="mesh-result ${fits ? 'ok' : 'warn'}">${fits ? t('split.done', { n: r.part_count }) : t('split.doneNoFit', { n: r.part_count })}</div>
 <div class="hint">${t('split.facts', { scale: Number(r.scale).toLocaleString(localeTag(), { maximumFractionDigits: 3 }), w: n1(e[0]), h: n1(e[1]), d: n1(e[2]), bw: n1(b[0]), bd: n1(b[1]), bh: n1(b[2]) })}</div>
 ${r.manual ? `<div class="hint">${t('split.cutManual')}</div>` : ''}
+${(r.connectors || []).length ? `<div class="hint">${t('split.dowels', { n: r.connectors.length, d: n1(r.connectors[0].diameter_mm), h: n1(r.connectors[0].hole_diameter_mm), c: n1(r.connectors[0].clearance_mm), l: n1(r.connectors[0].dowel_length_mm), depth: n1(r.connectors[0].depth_mm) })}</div>` : ''}
 <div class="hint">${t('split.up', { axis: String(r.up_axis || '').toUpperCase(), how: r.up_axis_auto ? t('split.upAuto') : t('split.upSet') })}</div>
 <div class="split-cuts" id="sp-cuts"></div>
 <table class="mesh-table"><tr><th>${t('split.colPart')}</th><th>${t('split.colSize')}</th><th>${t('split.colVol')}</th><th>${t('split.colFlat')}</th></tr>${rows}</table>
@@ -805,16 +823,30 @@ const AX = ['x', 'y', 'z'];
 let lastReport = null;
 let cutsEdit = null;
 let activeCut = -1;
+let dirty = false; // Liste wurde seit der letzten Berechnung geaendert: Umrisse und Duebel sind veraltet
+const dot3 = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
 const drawPlates = () => {
 if (!lastReport || !cutsEdit) { clearCutPlanes(); return; }
 const o = lastReport.origin_mm;
 const sc = Number(lastReport.scale);
 if (!Array.isArray(o) || !(sc > 0)) return;
-setCutPlanes(cutsEdit.map((c, i) => {
+const toFile = (p) => [o[0] + p[0] / sc, o[1] + p[1] / sc, o[2] + p[2] / sc];
+const planes = cutsEdit.map((c, i) => {
+const base = { active: i === activeCut };
+const outline = Array.isArray(c.section) && c.section.length ? c.section.map((poly) => poly.map(toFile)) : null;
+if (c.axis === 'free' && Array.isArray(c.normal) && Array.isArray(c.near)) {
+const k = Number(c.position_mm) - dot3(c.normal, c.near);
+const onPlane = c.near.map((v, j) => v + c.normal[j] * k);
+return { ...base, axis: 'free', normal: c.normal, pos: toFile(onPlane), outline, size: c.size || null };
+}
 const a = AX.indexOf(c.axis);
-const reg = Array.isArray(c.region_mm) && c.region_mm.length === 6 ? c.region_mm.map((v, k) => o[k % 3] + v / sc) : null;
-return { axis: c.axis, pos: o[a] + c.position_mm / sc, region: reg, active: i === activeCut };
+const reg = Array.isArray(c.region_mm) && c.region_mm.length === 6 ? c.region_mm.map((v, j) => o[j % 3] + v / sc) : null;
+return { ...base, axis: c.axis, pos: o[a] + c.position_mm / sc, region: reg, outline };
+});
+const conns = dirty ? [] : (lastReport.connectors || []).map((c) => ({
+center: toFile(c.center_mm), normal: c.normal, radius: (c.diameter_mm / 2) / sc, length: c.dowel_length_mm / sc,
 }));
+setCutPlanes(planes, conns);
 };
 const renderCuts = () => {
 const box = q('sp-cuts');
@@ -822,8 +854,9 @@ if (!box || !cutsEdit) return;
 const ext = lastReport.scaled_extents_mm || [];
 const rows = cutsEdit.map((c, i) => {
 const a = AX.indexOf(c.axis);
-const range = ext[a] != null ? `0 – ${n1(ext[a])}` : '';
-return `<tr data-i="${i}" class="${i === activeCut ? 'cut-active' : ''}"><td>${i + 1}</td><td>${c.axis.toUpperCase()}</td>
+const range = c.axis === 'free' ? '–' : (ext[a] != null ? `0 – ${n1(ext[a])}` : '');
+const label = c.axis === 'free' ? t('split.cutFree') : c.axis.toUpperCase();
+return `<tr data-i="${i}" class="${i === activeCut ? 'cut-active' : ''}"><td>${i + 1}</td><td>${label}</td>
 <td class="cut-pos"><button type="button" class="cut-btn" data-act="minus" title="${t('split.cutMinus')}">−5</button>
 <input type="number" class="cut-pos-in" step="1" value="${c.position_mm}">
 <button type="button" class="cut-btn" data-act="plus" title="${t('split.cutPlus')}">+5</button>
@@ -833,7 +866,7 @@ return `<tr data-i="${i}" class="${i === activeCut ? 'cut-active' : ''}"><td>${i
 box.innerHTML = `<h4 class="mesh-sub">${t('split.cutsTitle')}</h4>
 <div class="mesh-actions"><button type="button" class="btn-secondary" id="sp-editor">${t('split.cutEditor')}</button></div><p class="hint">${t('split.cutsHint')}</p>
 <table class="mesh-table"><tr><th>#</th><th>${t('split.cutColAxis')}</th><th>${t('split.cutColPos')}</th><th>${t('split.cutColRange')}</th><th></th></tr>${rows}</table>
-<div class="cut-draw"><span>${t('split.cutDraw')}</span>${AX.map((a) => `<button type="button" class="cut-btn" data-act="draw" data-axis="${a}">${a === (lastReport.up_axis || 'y') ? t('split.cutDrawHoriz', { axis: a.toUpperCase() }) : t('split.cutDrawVert', { axis: a.toUpperCase() })}</button>`).join('')}</div>
+<div class="cut-draw"><button type="button" class="cut-btn cut-line-btn" data-act="line">${t('split.cutLine')}</button></div>
 <div class="cut-add"><select id="sp-add-axis"><option value="x">X</option><option value="y">Y</option><option value="z">Z</option></select>
 <input type="number" id="sp-add-pos" step="1" placeholder="mm">
 <button type="button" class="cut-btn" id="sp-add">${t('split.cutAdd')}</button></div>
@@ -847,9 +880,20 @@ activeCut = i;
 document.querySelectorAll('#sp-cuts tr[data-i]').forEach((tr) => tr.classList.toggle('cut-active', Number(tr.dataset.i) === i));
 drawPlates();
 };
+// Position aendern; bei freien Ebenen wandert der Referenzpunkt mit der Ebene mit
+const setPos = (i, v) => {
+const c = cutsEdit[i];
+const old = Number(c.position_mm);
+c.position_mm = v;
+if (c.axis === 'free' && Array.isArray(c.near) && Array.isArray(c.normal) && Number.isFinite(v) && Number.isFinite(old)) {
+c.near = c.near.map((x, j) => Math.round((x + c.normal[j] * (v - old)) * 100) / 100);
+}
+c.section = null;
+dirty = true;
+};
 const nudge = (i, d) => {
 const c = cutsEdit[i];
-c.position_mm = Math.round((Number(c.position_mm) + d) * 100) / 100;
+setPos(i, Math.round((Number(c.position_mm) + d) * 100) / 100);
 const inp = document.querySelector(`#sp-cuts tr[data-i="${i}"] .cut-pos-in`);
 if (inp) inp.value = c.position_mm;
 setActive(i);
@@ -901,40 +945,46 @@ document.body.classList.remove('cut-editor-open');
 pokeResize();
 };
 document.addEventListener('keydown', (ev) => { if (ev.key === 'Escape' && editorOpen && alive()) closeEditor(); });
-// ---- Einzeichnen: Klick auf die Figur setzt (oder verschiebt) einen Schnitt ----
+// ---- Einzeichnen: zwei Klicks auf die Figur = Schnittlinie; die Ebene geht durch die Linie in Blickrichtung ----
 let pickBanner = null;
 const endPick = () => {
 setCutPickMode(null);
 if (pickBanner) { pickBanner.remove(); pickBanner = null; }
 };
-const startPick = (axis, rowIndex) => {
+const startLine = (rowIndex) => {
 endPick();
 const shell = shellEl();
 if (shell) {
 pickBanner = document.createElement('div');
 pickBanner.className = 'cut-pick-banner';
-pickBanner.textContent = t('split.cutPickBanner', { axis: axis.toUpperCase() });
+pickBanner.textContent = t('split.cutLine1');
 shell.appendChild(pickBanner);
 }
-setCutPickMode((p) => {
+setCutPickMode((r) => {
 const o = lastReport && lastReport.origin_mm;
 const sc = Number(lastReport && lastReport.scale);
 if (!Array.isArray(o) || !(sc > 0) || !cutsEdit) { endPick(); return; }
-const a = AX.indexOf(axis);
-const near = [0, 1, 2].map((k) => Math.round((p[k] - o[k]) * sc * 100) / 100);
-const pos = near[a];
-if (rowIndex >= 0 && cutsEdit[rowIndex]) {
-cutsEdit[rowIndex].position_mm = pos;
-cutsEdit[rowIndex].near = near;
-activeCut = rowIndex;
+const near = [0, 1, 2].map((k) => Math.round((r.mid[k] - o[k]) * sc * 100) / 100);
+let n = r.normal;
+// Vorzeichen festlegen (groesste Komponente positiv), damit gleiche Ebenen gleich aussehen
+const big = n.reduce((bi, v, j) => (Math.abs(v) > Math.abs(n[bi]) ? j : bi), 0);
+if (n[big] < 0) n = n.map((v) => -v);
+const snap = [0, 1, 2].find((j) => Math.abs(n[j]) > Math.cos(4 * Math.PI / 180));
+let item;
+if (snap !== undefined) {
+item = { axis: AX[snap], position_mm: near[snap], anchor: null, region_mm: null, near, normal: null, section: null, size: null };
 } else {
-cutsEdit.push({ axis, position_mm: pos, anchor: null, region_mm: null, near });
-activeCut = cutsEdit.length - 1;
+const nn = n.map((v) => Math.round(v * 100000) / 100000);
+const len = Math.hypot(r.p2[0] - r.p1[0], r.p2[1] - r.p1[1], r.p2[2] - r.p1[2]);
+item = { axis: 'free', position_mm: Math.round(dot3(nn, near) * 100) / 100, anchor: null, region_mm: null, near, normal: nn, section: null, size: len * 1.7 };
 }
+if (rowIndex >= 0 && cutsEdit[rowIndex]) { cutsEdit[rowIndex] = item; activeCut = rowIndex; }
+else { cutsEdit.push(item); activeCut = cutsEdit.length - 1; }
+dirty = true;
 endPick();
 renderCuts();
 drawPlates();
-});
+}, 'line', () => { if (pickBanner) pickBanner.textContent = t('split.cutLine2'); });
 };
 document.addEventListener('keydown', (ev) => {
 if (ev.key === 'Escape' && pickBanner && alive()) { ev.stopImmediatePropagation(); endPick(); }
@@ -950,9 +1000,11 @@ const o = { axis: c.axis, position_mm: Number(c.position_mm) };
 if (Array.isArray(c.anchor)) o.anchor = c.anchor;
 if (Array.isArray(c.region_mm)) o.region_mm = c.region_mm;
 if (Array.isArray(c.near)) o.near = c.near;
+if (c.axis === 'free' && Array.isArray(c.normal)) o.normal = c.normal;
 return o;
 });
 }
+input.connectors = readDowel();
 remember();
 render({ state: 'queued', progress: t('mesh.uploading') });
 try {
@@ -970,17 +1022,18 @@ if (!b || !cutsEdit) return;
 const i = rowIndex(b);
 if (b.dataset.act === 'minus' && i >= 0) nudge(i, -5);
 else if (b.dataset.act === 'plus' && i >= 0) nudge(i, 5);
-else if (b.dataset.act === 'remove' && i >= 0) { cutsEdit.splice(i, 1); activeCut = -1; renderCuts(); drawPlates(); }
+else if (b.dataset.act === 'remove' && i >= 0) { cutsEdit.splice(i, 1); activeCut = -1; dirty = true; renderCuts(); drawPlates(); }
 else if (b.id === 'sp-add') {
 const axis = q('sp-add-axis').value;
 const pos = Number(q('sp-add-pos').value);
 if (q('sp-add-pos').value === '' || !Number.isFinite(pos)) return;
-cutsEdit.push({ axis, position_mm: pos, anchor: null, region_mm: null });
+cutsEdit.push({ axis, position_mm: pos, anchor: null, region_mm: null, near: null, normal: null, section: null, size: null });
+dirty = true;
 activeCut = cutsEdit.length - 1;
 renderCuts();
 drawPlates();
-} else if (b.dataset.act === 'pick' && i >= 0) startPick(cutsEdit[i].axis, i);
-else if (b.dataset.act === 'draw') startPick(b.dataset.axis, -1);
+} else if (b.dataset.act === 'pick' && i >= 0) startLine(i);
+else if (b.dataset.act === 'line') startLine(-1);
 else if (b.id === 'sp-editor') openEditor();
 else if (b.id === 'sp-editor-close') closeEditor();
 else if (b.id === 'sp-recalc') recompute(true);
@@ -991,7 +1044,7 @@ if (!alive() || !ev.target.closest || !ev.target.closest('#sp-cuts')) return;
 if (!ev.target.classList.contains('cut-pos-in') || !cutsEdit) return;
 const i = rowIndex(ev.target);
 if (i < 0) return;
-cutsEdit[i].position_mm = ev.target.value === '' ? NaN : Number(ev.target.value);
+setPos(i, ev.target.value === '' ? NaN : Number(ev.target.value));
 setActive(i);
 drawPlates();
 });
@@ -1012,7 +1065,8 @@ if (running) {
 resultEl.innerHTML = `<div class="hint">${t('split.running')}${st.progress ? ' – ' + escapeHtml(st.progress) : ''}</div>`;
 } else if (st.state === 'done') {
 lastReport = st.report || {};
-cutsEdit = (lastReport.cuts || []).map((c) => ({ axis: c.axis, position_mm: c.position_mm, anchor: c.anchor || null, region_mm: c.region_mm || null, near: c.near || null }));
+cutsEdit = (lastReport.cuts || []).map((c) => ({ axis: c.axis, position_mm: c.position_mm, anchor: c.anchor || null, region_mm: c.region_mm || null, near: c.near || null, normal: c.normal || null, section: c.section || null, size: null }));
+dirty = false;
 activeCut = -1;
 resultEl.innerHTML = reportHtml(lastReport, st.download_url);
 renderCuts();

@@ -263,6 +263,294 @@ def _split_piece(M, faces, axis, pos):
     return out
 
 
+
+# ---------------------------------------------------------------- Freie Schnittebenen (beliebige Richtung)
+
+def _unit(v):
+    v = np.asarray(v, dtype=float)
+    n = float(np.linalg.norm(v))
+    if not (n > 1e-9):
+        raise PlanError("Schnittebene: Normale ungueltig")
+    return v / n
+
+
+def _rot_to_z(n):
+    """Drehmatrix R (3x3) mit R @ n = (0, 0, 1)."""
+    n = _unit(n)
+    z = np.array([0.0, 0.0, 1.0])
+    c = float(np.dot(n, z))
+    if c > 1.0 - 1e-12:
+        return np.eye(3)
+    if c < -1.0 + 1e-12:
+        return np.diag([1.0, -1.0, -1.0])
+    v = np.cross(n, z)
+    s = float(np.linalg.norm(v))
+    vx = np.array([[0, -v[2], v[1]], [v[2], 0, -v[0]], [-v[1], v[0], 0]])
+    return np.eye(3) + vx + vx @ vx * ((1 - c) / (s * s))
+
+
+def _free_view(M, R):
+    return M.transform(np.hstack([R, np.zeros((3, 1))]))
+
+
+def _slice_free(M, R, d):
+    return _free_view(M, R).slice(float(d))
+
+
+def _polys_of(cs):
+    return [np.asarray(p, dtype=float) for p in cs.to_polygons() if len(p) >= 3]
+
+
+def _dist_to_polys(q, polys):
+    if not polys:
+        return float("inf")
+    if _point_in_polys(q, polys):
+        return 0.0
+    best = float("inf")
+    for p in polys:
+        a, b = p, np.roll(p, -1, axis=0)
+        ab = b - a
+        denom = np.maximum((ab * ab).sum(axis=1), 1e-12)
+        t = np.clip(((q - a) * ab).sum(axis=1) / denom, 0.0, 1.0)
+        best = min(best, float(np.hypot(*(a + ab * t[:, None] - q).T).min()))
+    return best
+
+
+def _dist_free(M, R, d, point):
+    q = (R @ np.asarray(point, dtype=float))[:2]
+    return _dist_to_polys(q, _polys_of(_slice_free(M, R, d)))
+
+
+def _crosses(M, n, d, tol=0.5):
+    lo, hi = _bounds(M)
+    corners = np.array([[x, y, z] for x in (lo[0], hi[0]) for y in (lo[1], hi[1]) for z in (lo[2], hi[2])])
+    sd = corners @ n - d
+    return bool(sd.min() < -tol and sd.max() > tol)
+
+
+def _decimate(p, limit=240):
+    if len(p) <= limit:
+        return p
+    idx = np.linspace(0, len(p) - 1, limit).astype(int)
+    return p[idx]
+
+
+def _section_polys(M, spec):
+    """Querschnitt als 2D-Konturen plus Abbildung (u,v) -> 3D (skalierte Koordinaten)."""
+    if spec[0] == "axis":
+        axis, pos = spec[1], spec[2]
+        polys = _polys_of(_axis_view(M, axis).slice(float(pos)))
+
+        def to3(u, v):
+            if axis == 2:
+                return (u, v, pos)
+            if axis == 1:
+                return (u, pos, -v)
+            return (pos, v, -u)
+    else:
+        R, d = spec[1], spec[2]
+        polys = _polys_of(_slice_free(M, R, d))
+        Rt = R.T
+
+        def to3(u, v):
+            return tuple(Rt @ np.array([u, v, d]))
+    return polys, to3
+
+
+def _section_3d(M, spec):
+    """Konturen des Querschnitts als 3D-Polygone fuer die Anzeige."""
+    polys, to3 = _section_polys(M, spec)
+    return [[[round(float(c), 2) for c in to3(u, v)] for u, v in _decimate(p)] for p in polys]
+
+
+def _connect(first, spec, n, d, children, cfg, report_extra):
+    """Duebel planen und Loecher bohren. Liefert (Kinder, entferntes Volumen, Verbinder|None, Warnung|None)."""
+    if not cfg.get("enabled"):
+        return children, 0.0, None, None
+    polys, to3 = _section_polys(first, spec)
+    plan, why = _plan_dowel(first, polys, n, d, lambda q: to3(q[0], q[1]), cfg)
+    if plan is None:
+        return children, 0.0, None, why
+    clearance = float(cfg.get("clearance_mm", 0.3))
+    kids, removed = _punch(children, n, d, plan, clearance)
+    conn = {
+        "center_mm": [round(x, 2) for x in plan["center"]],
+        "normal": [round(float(x), 5) for x in n],
+        "diameter_mm": round(plan["radius"] * 2, 2),
+        "hole_diameter_mm": round(plan["radius"] * 2 + clearance, 2),
+        "depth_mm": round(plan["depth"], 1),
+        "dowel_length_mm": round(2 * plan["depth"] - 1.5, 1),
+        "clearance_mm": clearance,
+    }
+    conn.update(report_extra)
+    return kids, removed, conn, None
+
+
+def _split_free(M, faces, n, d):
+    above, below = M.split_by_plane([float(x) for x in n], float(d))
+    out = []
+    for piece, sign in ((below, 1.0), (above, -1.0)):
+        if piece.is_empty():
+            continue
+        for comp in piece.decompose():
+            if comp.volume() <= 1e-6:
+                continue
+            outward = tuple(float(x) for x in (sign * n))
+            out.append((comp, list(faces) + [("n", outward, float(d) * sign)]))
+    return out
+
+
+def _orient_free(tm, M, faces, bed):
+    """Teil mit schraeger Schnittflaeche: Flaeche nach unten, um Z drehen bis es aufs Bett passt."""
+    scored = []
+    lo_v, hi_v = _bounds(M)
+    for f in faces:
+        if f[0] == "n":
+            _, o, d_out = f
+            try:
+                area = float(_slice_free(M, _rot_to_z(o), d_out - 0.05).area())
+            except Exception:
+                area = 0.0
+            scored.append((area, np.asarray(o, dtype=float)))
+        else:
+            a, side = f
+            o = np.zeros(3)
+            o[a] = 1.0 if side == "max" else -1.0
+            at = (hi_v[a] - 0.05) if side == "max" else (lo_v[a] + 0.05)
+            try:
+                area = float(_axis_view(M, a).slice(float(at)).area())
+            except Exception:
+                area = 0.0
+            scored.append((area, o))
+    scored.sort(key=lambda t: -t[0])
+    best = None
+    for _, o in scored:
+        R = _rot_to_z(-np.asarray(o))      # o -> -Z (Schnittflaeche unten)
+        V = tm.vertices @ R.T
+        for deg in range(0, 180, 3):
+            t = math.radians(deg)
+            c, s_ = math.cos(t), math.sin(t)
+            W = V.copy()
+            W[:, 0] = c * V[:, 0] - s_ * V[:, 1]
+            W[:, 1] = s_ * V[:, 0] + c * V[:, 1]
+            ext = W.max(axis=0) - W.min(axis=0)
+            ratio = max(ext[0] / bed[0], ext[1] / bed[1], ext[2] / bed[2])
+            key = (0 if ratio <= 1 + 1e-9 else 1, ext[0] * ext[1] if ratio <= 1 + 1e-9 else ratio)
+            if best is None or key < best[0]:
+                best = (key, R, deg)
+        if best[0][0] == 0:
+            break
+    key, R, deg = best
+    t = math.radians(deg)
+    Rz = np.array([[math.cos(t), -math.sin(t), 0], [math.sin(t), math.cos(t), 0], [0, 0, 1.0]])
+    out = tm.copy()
+    out.vertices = (tm.vertices @ R.T) @ Rz.T
+    out.vertices -= out.bounds[0]
+    return out, key[0] == 0
+
+
+
+# ---------------------------------------------------------------- Duebel (Loecher in beiden Teilen + loser Duebel)
+
+def _pole(polys):
+    """Punkt im Querschnitt mit dem groessten Abstand zum Rand: (uv, Radius)."""
+    big = max(polys, key=lambda p: abs(0.5 * float(np.dot(p[:, 0], np.roll(p[:, 1], -1)) - np.dot(p[:, 1], np.roll(p[:, 0], -1)))))
+    lo, hi = big.min(axis=0), big.max(axis=0)
+    best = (0.0, None)
+    n = 37
+    xs = np.linspace(lo[0], hi[0], n)
+    ys = np.linspace(lo[1], hi[1], n)
+    a_all = np.vstack(polys)
+    for step in range(2):
+        for x in xs:
+            for y in ys:
+                q = np.array([x, y])
+                if not _point_in_polys(q, polys):
+                    continue
+                dmin = _dist_edges(q, polys)
+                if dmin > best[0]:
+                    best = (dmin, q)
+        if best[1] is None:
+            break
+        if step == 0:   # feiner um den besten Punkt
+            w = max(hi[0] - lo[0], hi[1] - lo[1]) / n * 2
+            xs = np.linspace(best[1][0] - w, best[1][0] + w, 17)
+            ys = np.linspace(best[1][1] - w, best[1][1] + w, 17)
+    return best[1], best[0]
+
+
+def _dist_edges(q, polys):
+    best = float("inf")
+    for p in polys:
+        a, b = p, np.roll(p, -1, axis=0)
+        ab = b - a
+        denom = np.maximum((ab * ab).sum(axis=1), 1e-12)
+        t = np.clip(((q - a) * ab).sum(axis=1) / denom, 0.0, 1.0)
+        best = min(best, float(np.hypot(*(a + ab * t[:, None] - q).T).min()))
+    return best
+
+
+def _cylinder(point, n, h_back, h_front, radius):
+    """Zylinder entlang n, von point - n*h_back bis point + n*h_front."""
+    cyl = m3.Manifold.cylinder(h_back + h_front, radius, radius, 48)
+    R = _rot_to_z(n)
+    cyl = cyl.translate((0.0, 0.0, -h_back))
+    cyl = cyl.transform(np.hstack([R.T, np.zeros((3, 1))]))
+    return cyl.translate(tuple(float(x) for x in point))
+
+
+def _plan_dowel(first, polys_uv, n, d, frame_back, cfg):
+    """Mitte, Radius, Tiefe des Duebels fuer einen Schnitt; None wenn die Flaeche zu klein ist."""
+    if not polys_uv:
+        return None, "kein Querschnitt"
+    q, rmax = _pole(polys_uv)
+    if q is None or rmax < 4.0:
+        return None, "Schnittflaeche zu klein fuer einen Duebel"
+    center = frame_back(q)
+    diam = float(cfg.get("diameter_mm") or 0)
+    r = diam / 2.0 if diam > 0 else min(rmax * 0.5, 6.0)
+    r = min(r, rmax - 1.5)
+    if r < 2.0:
+        return None, "Schnittflaeche zu klein fuer einen Duebel"
+    depth = float(cfg.get("depth_mm", 15))
+    lo, hi = _bounds(first)
+    corners = np.array([[x, y, z] for x in (lo[0], hi[0]) for y in (lo[1], hi[1]) for z in (lo[2], hi[2])])
+    proj = corners @ n
+    thick = float(max(abs(proj.max() - d), abs(d - proj.min())))
+    depth = min(depth, thick - 4.0)
+    if depth < 6.0:
+        return None, "Teil zu duenn fuer einen Duebel"
+    return {"center": [float(x) for x in center], "radius": float(r), "depth": float(depth), "rmax": float(rmax)}, None
+
+
+def _punch(children, n, d, plan, clearance):
+    """Loch in beide Kinder (unter/ueber der Ebene) bohren; liefert (neue Kinder, entferntes Volumen)."""
+    c = np.asarray(plan["center"])
+    rh = plan["radius"] + clearance / 2.0
+    L = plan["depth"]
+    out, removed = [], 0.0
+    for comp, faces in children:
+        lo, hi = _bounds(comp)
+        corners = np.array([[x, y, z] for x in (lo[0], hi[0]) for y in (lo[1], hi[1]) for z in (lo[2], hi[2])])
+        sd = corners @ n - d
+        if sd.max() <= 0.5 and sd.min() < -0.5:       # Teil liegt unter der Ebene
+            cyl = _cylinder(c, n, L, 0.5, rh)
+        elif sd.min() >= -0.5 and sd.max() > 0.5:     # Teil liegt ueber der Ebene
+            cyl = _cylinder(c, n, 0.5, L, rh)
+        else:
+            out.append((comp, faces))
+            continue
+        before = comp.volume()
+        new = comp - cyl
+        after = new.volume()
+        if new.is_empty() or after <= 0:
+            out.append((comp, faces))
+            continue
+        removed += before - after
+        out.append((new, faces))
+    return out, removed
+
+
 def _fallback_perm(ext, bed):
     """Fuer Teile, die nicht passen: Zuordnung mit dem kleinsten Ueberstand."""
     return min(PERMS, key=lambda p: (max(ext[p[i]] / bed[i] for i in range(3)), ext[p[2]]))
@@ -310,6 +598,10 @@ def split_mesh(path, params, progress=None):
     ext_scaled = [float(x) for x in loaded.extents]
 
     warnings = []
+    cfg = {"enabled": True, "clearance_mm": 0.3, "depth_mm": 15.0, "diameter_mm": 0.0}
+    cfg.update({k: v for k, v in (params.get("connectors") or {}).items() if k in cfg})
+    connectors = []
+    removed_total = 0.0
     manual = params.get("cuts")
     cuts = []
     if manual is None:
@@ -339,8 +631,18 @@ def split_mesh(path, params, progress=None):
                 "anchor": anchor,
                 "region_mm": [round(float(x), 2) for x in list(lo_v) + list(hi_v)],
                 "pieces_cut": 1,
+                "section": _section_3d(M, ("axis", axis, pos)),
             })
-            for item in _split_piece(M, faces, axis, pos):
+            kids = _split_piece(M, faces, axis, pos)
+            nvec = np.zeros(3)
+            nvec[axis] = 1.0
+            kids, rem, conn, why = _connect(M, ("axis", axis, pos), nvec, pos, kids, cfg, {"cut": len(cuts)})
+            removed_total += rem
+            if conn:
+                connectors.append(conn)
+            elif why:
+                warnings.append(f"Schnitt {len(cuts)}: {why}, kein Duebel")
+            for item in kids:
                 work.append(item)
     else:
         if not isinstance(manual, list) or len(manual) > 60:
@@ -348,24 +650,37 @@ def split_mesh(path, params, progress=None):
         done = [(M0, [])]
         for ci, c in enumerate(manual, 1):
             say(f"Schnitt {ci} von {len(manual)}")
+            is_free = str(c.get("axis", "")).lower() == "free"
             try:
-                axis = AXIS_NAMES.index(str(c["axis"]).lower())
                 pos = float(c["position_mm"])
+                if is_free:
+                    nrm = _unit(c["normal"])
+                    R = _rot_to_z(nrm)
+                    axis = None
+                else:
+                    axis = AXIS_NAMES.index(str(c["axis"]).lower())
             except (KeyError, ValueError, TypeError):
                 raise PlanError(f"Schnitt {ci}: Achse oder Position ungueltig")
-            anchor = c.get("anchor")
+            label = "frei" if is_free else AXIS_NAMES[axis]
+            anchor = None if is_free else c.get("anchor")
             region = c.get("region_mm")
-            cand = []
-            for idx, (M, faces) in enumerate(done):
-                lo_v, hi_v = _bounds(M)
-                if not (lo_v[axis] + 0.5 < pos < hi_v[axis] - 0.5):
-                    continue
-                cand.append(idx)
-            sel = []
             near = c.get("near")
-            if near and len(near) == 3 and cand:
+            near = near if near and len(near) == 3 else None
+            if is_free:
+                cand = [i for i, (M, f) in enumerate(done) if _crosses(M, nrm, pos)]
+            else:
+                cand = []
+                for idx, (M, faces) in enumerate(done):
+                    lo_v, hi_v = _bounds(M)
+                    if lo_v[axis] + 0.5 < pos < hi_v[axis] - 0.5:
+                        cand.append(idx)
+            sel = []
+            if near and cand:
                 # Klick auf die Figur: nur das Teil schneiden, dessen Querschnitt dem Klickpunkt am naechsten liegt
-                dists = [(_dist_to_slice(done[i][0], axis, pos, near), i) for i in cand]
+                if is_free:
+                    dists = [(_dist_free(done[i][0], R, pos, near), i) for i in cand]
+                else:
+                    dists = [(_dist_to_slice(done[i][0], axis, pos, near), i) for i in cand]
                 sel = [min(dists)[1]]
             elif anchor and len(anchor) == 2:
                 sel = [i for i in cand if _contains_anchor(done[i][0], axis, pos, anchor)]
@@ -374,41 +689,55 @@ def split_mesh(path, params, progress=None):
                     lo_v, hi_v = _bounds(done[i][0])
                     if all(min(hi_v[k], region[3 + k]) - max(lo_v[k], region[k]) > 1.0 for k in range(3)):
                         sel.append(i)
-            if not sel and not anchor and not region:
+            if not sel and not anchor and not region and not near:
                 sel = cand
-            area_sum, contours_sum, ext_first = 0.0, 0, None
-            for i in sel:
-                M, faces = done[i]
-                cs = _axis_view(M, axis).slice(float(pos))
-                area_sum += float(cs.area())
-                contours_sum += int(cs.num_contour())
+            base = {"axis": label, "position_mm": round(pos, 2), "near": near, "region_mm": region}
+            if is_free:
+                base["normal"] = [round(float(x), 5) for x in nrm]
             if not sel:
-                warnings.append(f"Schnitt {ci} ({AXIS_NAMES[axis]} = {pos:.1f} mm) trifft kein Teil und wurde ignoriert")
-                cuts.append({"axis": AXIS_NAMES[axis], "position_mm": round(pos, 2), "area_mm2": 0.0,
-                             "contours": 0, "part_extents_mm": [], "anchor": anchor, "region_mm": region,
-                             "near": near if near and len(near) == 3 else None, "pieces_cut": 0})
+                warnings.append(f"Schnitt {ci} ({label} = {pos:.1f} mm) trifft kein Teil und wurde ignoriert")
+                cuts.append({**base, "area_mm2": 0.0, "contours": 0, "part_extents_mm": [], "anchor": anchor,
+                             "pieces_cut": 0, "section": []})
                 continue
             if len(done) + len(sel) > MAX_PARTS:
                 raise PlanError(f"Mehr als {MAX_PARTS} Teile - Schnittliste pruefen")
-            first_ext = _bounds(done[sel[0]][0])
+            area_sum, contours_sum = 0.0, 0
+            for i in sel:
+                cs = _slice_free(done[i][0], R, pos) if is_free else _axis_view(done[i][0], axis).slice(float(pos))
+                area_sum += float(cs.area())
+                contours_sum += int(cs.num_contour())
+            first = done[sel[0]][0]
+            first_ext = _bounds(first)
             new_anchor = anchor
-            if not (anchor and len(anchor) == 2 and _contains_anchor(done[sel[0]][0], axis, pos, anchor)):
-                new_anchor = _interior_point(_axis_view(done[sel[0]][0], axis).slice(float(pos)))
+            if not is_free and not (anchor and len(anchor) == 2 and _contains_anchor(first, axis, pos, anchor)):
+                new_anchor = _interior_point(_axis_view(first, axis).slice(float(pos)))
+            spec = ("free", R, pos) if is_free else ("axis", axis, pos)
             cuts.append({
-                "axis": AXIS_NAMES[axis],
-                "position_mm": round(pos, 2),
+                **base,
                 "area_mm2": round(area_sum, 1),
                 "contours": contours_sum,
                 "part_extents_mm": [round(float(x), 1) for x in (first_ext[1] - first_ext[0])],
                 "anchor": new_anchor,
-                "region_mm": region,
-                "near": near if near and len(near) == 3 else None,
                 "pieces_cut": len(sel),
+                "section": _section_3d(first, spec),
             })
             new_done = []
             for i, (M, faces) in enumerate(done):
                 if i in sel:
-                    new_done.extend(_split_piece(M, faces, axis, pos))
+                    kids = _split_free(M, faces, nrm, pos) if is_free else _split_piece(M, faces, axis, pos)
+                    if len(sel) == 1:
+                        if is_free:
+                            nvec = nrm
+                        else:
+                            nvec = np.zeros(3)
+                            nvec[axis] = 1.0
+                        kids, rem, conn, why = _connect(M, spec, nvec, pos, kids, cfg, {"cut": len(cuts)})
+                        removed_total += rem
+                        if conn:
+                            connectors.append(conn)
+                        elif why:
+                            warnings.append(f"Schnitt {len(cuts)}: {why}, kein Duebel")
+                    new_done.extend(kids)
                 else:
                     new_done.append((M, faces))
             done = new_done
@@ -418,12 +747,18 @@ def split_mesh(path, params, progress=None):
     for M, faces in done:
         lo_v, hi_v = _bounds(M)
         ext = hi_v - lo_v
-        p = _pick_perm(ext, bed, faces, up)
-        fits = p is not None
-        if p is None:
-            p = _fallback_perm(ext, bed)
         tm = _to_trimesh(M)
-        oriented, flat, flipped = _orient(tm, p, faces)
+        if any(f[0] == "n" for f in faces):
+            oriented, fits = _orient_free(tm, M, faces, bed)
+            flat, flipped, p = True, False, (0, 1, 2)
+            up_orig = "frei"
+        else:
+            p = _pick_perm(ext, bed, faces, up)
+            fits = p is not None
+            if p is None:
+                p = _fallback_perm(ext, bed)
+            oriented, flat, flipped = _orient(tm, p, faces)
+            up_orig = AXIS_NAMES[p[2]]
         centroid = (lo_v + hi_v) / 2.0
         parts.append({
             "mesh": oriented,
@@ -431,7 +766,7 @@ def split_mesh(path, params, progress=None):
             "sort": (round(up_sign * float(centroid[up]) / 10.0), float(centroid[0]), float(centroid[2 if up != 2 else 1])),
             "flat_cut_face_down": bool(flat),
             "turned_over": bool(flipped),
-            "up_axis_original": AXIS_NAMES[p[2]],
+            "up_axis_original": up_orig,
             "fits": bool(fits),
             "bounds_mm": [round(float(x), 2) for x in list(lo_v) + list(hi_v)],
         })
@@ -456,10 +791,15 @@ def split_mesh(path, params, progress=None):
                 "bounds_mm": d["bounds_mm"],
             })
         vol_sum = sum(d["volume"] for d in parts)
-        diff = abs(vol_sum - volume_scaled) / max(volume_scaled, 1.0)
+        diff = abs(vol_sum + removed_total - volume_scaled) / max(volume_scaled, 1.0)
         all_fit = all(
             all(sorted(r["extents_mm"])[i] <= sorted(bed)[i] + 0.2 for i in range(3)) for r in part_reports
         )
+        for k, cn in enumerate(connectors, 1):
+            cyl = trimesh.creation.cylinder(radius=cn["diameter_mm"] / 2.0, height=cn["dowel_length_mm"], sections=48)
+            cyl.vertices -= cyl.bounds[0]
+            zf.writestr(f"Duebel-{k:02d}.stl", trimesh.exchange.stl.export_stl(cyl))
+            cn["name"] = f"Duebel-{k:02d}"
         if diff > 1e-4:
             warnings.append(f"Volumensumme weicht um {diff * 100:.3f} % vom Original ab - Ergebnis pruefen")
         tiny = sum(1 for r in part_reports if r["tiny"])
@@ -483,6 +823,8 @@ def split_mesh(path, params, progress=None):
             "parts": part_reports,
             "part_count": len(part_reports),
             "cuts": cuts,
+            "connectors": connectors,
+            "connector_settings": cfg,
             "checks": {
                 "all_parts_fit": bool(all_fit),
                 "volume_sum_diff_fraction": round(diff, 8),

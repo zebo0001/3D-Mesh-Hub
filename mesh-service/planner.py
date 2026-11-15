@@ -160,7 +160,6 @@ def _choose_cut(M, axis, lo, hi, n, limit):
     return best[1], best[2], best[3]
 
 
-
 # ---------------------------------------------------------------- Anker (Teilezuordnung fuer feste Schnitte)
 
 def _point_in_polys(pt, polys):
@@ -361,6 +360,19 @@ def _section_3d(M, spec):
     """Konturen des Querschnitts als 3D-Polygone fuer die Anzeige."""
     polys, to3 = _section_polys(M, spec)
     return [[[round(float(c), 2) for c in to3(u, v)] for u, v in _decimate(p)] for p in polys]
+
+
+def _cut_cfg(cfg, dowel_mm):
+    """Einstellungen fuer einen Schnitt: dowel_mm None = global, 0 = kein Duebel, >0 = fester Durchmesser."""
+    if dowel_mm is None:
+        return cfg
+    c = dict(cfg)
+    if float(dowel_mm) <= 0:
+        c["enabled"] = False
+    else:
+        c["enabled"] = True
+        c["diameter_mm"] = float(dowel_mm)
+    return c
 
 
 def _connect(first, spec, n, d, children, cfg, report_extra):
@@ -691,7 +703,7 @@ def split_mesh(path, params, progress=None):
                         sel.append(i)
             if not sel and not anchor and not region and not near:
                 sel = cand
-            base = {"axis": label, "position_mm": round(pos, 2), "near": near, "region_mm": region}
+            base = {"axis": label, "position_mm": round(pos, 2), "near": near, "region_mm": region, "dowel_mm": c.get("dowel_mm")}
             if is_free:
                 base["normal"] = [round(float(x), 5) for x in nrm]
             if not sel:
@@ -731,7 +743,7 @@ def split_mesh(path, params, progress=None):
                         else:
                             nvec = np.zeros(3)
                             nvec[axis] = 1.0
-                        kids, rem, conn, why = _connect(M, spec, nvec, pos, kids, cfg, {"cut": len(cuts)})
+                        kids, rem, conn, why = _connect(M, spec, nvec, pos, kids, _cut_cfg(cfg, c.get("dowel_mm")), {"cut": len(cuts)})
                         removed_total += rem
                         if conn:
                             connectors.append(conn)
@@ -762,6 +774,7 @@ def split_mesh(path, params, progress=None):
         centroid = (lo_v + hi_v) / 2.0
         parts.append({
             "mesh": oriented,
+            "assembled": tm,
             "volume": float(M.volume()),
             "sort": (round(up_sign * float(centroid[up]) / 10.0), float(centroid[0]), float(centroid[2 if up != 2 else 1])),
             "flat_cut_face_down": bool(flat),
@@ -779,6 +792,7 @@ def split_mesh(path, params, progress=None):
             name = f"Teil-{i:02d}"
             data = trimesh.exchange.stl.export_stl(d["mesh"])
             zf.writestr(f"{name}.stl", data)
+            zf.writestr(f"vorschau/{name}.stl", trimesh.exchange.stl.export_stl(d["assembled"]))
             e = [round(float(x), 1) for x in d["mesh"].extents]
             part_reports.append({
                 "name": name,

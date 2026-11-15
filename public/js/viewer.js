@@ -171,6 +171,8 @@ function clearCurrent() {
   origMaterials.clear();
   bedOn = false;
   rebuildBed();
+  partsGroup = null;
+  partMeshes = [];
   cutGroup = null;
   clearLineMarkers();
   cutPick = null;
@@ -393,7 +395,7 @@ export function setBed({ on, presetId }) {
 
 function meshList() {
   const list = [];
-  if (currentMesh) currentMesh.traverse((c) => { if (c.isMesh && !c.userData.cap && !c.userData.cutPlate) list.push(c); });
+  if (currentMesh) currentMesh.traverse((c) => { if (c.isMesh && !c.userData.cap && !c.userData.cutPlate && !c.userData.partMesh) list.push(c); });
   return list;
 }
 
@@ -699,4 +701,96 @@ export function setCutPlanes(planes, connectors = []) {
     cutGroup.add(m);
   }
   currentMesh.add(cutGroup);
+}
+
+// ---------------- Kamera passend einstellen ----------------
+// Blickrichtung behalten, Abstand so waehlen, dass das Modell das Fenster fuellt.
+export function fitCamera() {
+  if (!camera || !controls || !modelBox) return;
+  const size = modelBox.getSize(new THREE.Vector3());
+  const maxDim = Math.max(size.x, size.y, size.z) || 1;
+  const dir = camera.position.clone().sub(controls.target);
+  if (dir.length() < 1e-6) dir.set(1, 0.8, 1);
+  dir.normalize();
+  const dist = (maxDim / 2) / Math.tan((camera.fov * Math.PI) / 360) * 1.15;
+  camera.position.copy(controls.target).addScaledVector(dir, dist);
+  controls.update();
+}
+
+// ---------------- Teile in Einbaulage / Explosionsansicht ----------------
+// parts: [{ url, bounds_mm (skalierte Koordinaten), color }], origin/scale aus dem Planer-Bericht
+let partsGroup = null;
+let partMeshes = [];
+let partInfo = { origin: [0, 0, 0], scale: 1, center: [0, 0, 0], offsets: [] };
+
+export function hideParts() {
+  if (partsGroup) {
+    partsGroup.traverse((c) => { if (c.geometry) c.geometry.dispose(); if (c.material) c.material.dispose(); });
+    if (partsGroup.parent) partsGroup.parent.remove(partsGroup);
+  }
+  partsGroup = null;
+  partMeshes = [];
+  for (const m of meshList()) setMatVisible(m, true);
+  if (cutGroup) cutGroup.visible = true;
+}
+
+function setMatVisible(m, v) {
+  (Array.isArray(m.material) ? m.material : [m.material]).forEach((x) => { if (x) x.visible = v; });
+}
+
+export async function showParts(parts, origin, scale) {
+  hideParts();
+  if (!currentMesh) return false;
+  partsGroup = new THREE.Group();
+  partInfo = { origin, scale, center: [0, 0, 0], offsets: [] };
+  // Gesamtmitte (skaliert) aus den Teile-Grenzen
+  const lo = [Infinity, Infinity, Infinity];
+  const hi = [-Infinity, -Infinity, -Infinity];
+  for (const p of parts) for (let k = 0; k < 3; k++) { lo[k] = Math.min(lo[k], p.bounds_mm[k]); hi[k] = Math.max(hi[k], p.bounds_mm[3 + k]); }
+  partInfo.center = [0, 1, 2].map((k) => (lo[k] + hi[k]) / 2);
+  const loader = new STLLoader();
+  const group = partsGroup;
+  const loaded = await Promise.all(parts.map((p) => new Promise((resolve) => {
+    loader.load(p.url, (geo) => resolve(geo), undefined, () => resolve(null));
+  })));
+  if (group !== partsGroup) return false; // inzwischen abgebrochen
+  partMeshes = [];
+  parts.forEach((p, i) => {
+    const geo = loaded[i];
+    if (!geo) { partMeshes.push(null); partInfo.offsets.push([0, 0, 0]); return; }
+    geo.computeVertexNormals();
+    const mat = new THREE.MeshStandardMaterial({ color: p.color, metalness: 0.05, roughness: 0.65 });
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.userData.partMesh = true;
+    mesh.scale.setScalar(1 / scale);
+    mesh.position.set(origin[0], origin[1], origin[2]);
+    const c = [0, 1, 2].map((k) => (p.bounds_mm[k] + p.bounds_mm[3 + k]) / 2 - partInfo.center[k]);
+    partInfo.offsets.push(c);
+    partMeshes.push(mesh);
+    partsGroup.add(mesh);
+  });
+  for (const m of meshList()) setMatVisible(m, false);
+  if (cutGroup) cutGroup.visible = false;
+  currentMesh.add(partsGroup);
+  setExplode(0.3);
+  return true;
+}
+
+// f: 0 = zusammengebaut, 1 = Teile um ihren Abstand zur Mitte auseinandergezogen
+export function setExplode(f) {
+  const { origin, scale, offsets } = partInfo;
+  partMeshes.forEach((m, i) => {
+    if (!m) return;
+    const o = offsets[i];
+    m.position.set(origin[0] + (o[0] * f) / scale, origin[1] + (o[1] * f) / scale, origin[2] + (o[2] * f) / scale);
+  });
+}
+
+export function highlightPart(index) {
+  partMeshes.forEach((m, i) => {
+    if (!m) return;
+    m.material.emissive.setHex(i === index ? 0x555555 : 0x000000);
+    m.material.opacity = index < 0 || i === index ? 1 : 0.35;
+    m.material.transparent = !(index < 0 || i === index);
+  });
 }

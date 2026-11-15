@@ -3,6 +3,16 @@
 Alle nennenswerten Aenderungen an 3D Mesh Hub werden hier dokumentiert.
 Das Projekt folgt [Semantic Versioning](https://semver.org/lang/de/) (MAJOR.MINOR.PATCH).
 
+## [1.13.0] - 2026-11-15
+
+### Hinzugefuegt
+- Aufteilen: Explosionsansicht im Schnitt-Editor. Jedes Teil bekommt eine Farbe, Regler "Abstand" zieht die Teile auseinander, die Teileliste (Farbe, Name, Masse, Volumen, Warnung bei Splittern) hebt beim Ueberfahren das Teil im Viewer hervor. Grundlage: die ZIP enthaelt zusaetzlich `vorschau/Teil-NN.stl` (zusammengebaute Lage), abrufbar ueber `GET /api/files/:id/split/preview/:n`. Aeltere Ergebnisse muessen neu berechnet werden.
+- Duebel-Durchmesser pro Schnitt (Spalte "Duebel O": leer = automatisch, 0 = kein Duebel), nur bei eigener Schnittliste.
+- Der Editor zoomt beim Oeffnen passend auf die Figur.
+
+### Bekannt
+- Der automatische Vorschlag kann weiterhin einen Kopf oder Koerper teilen, wenn das Teil breiter als das Bett ist; ein breiterer Suchbereich brachte in einem Test deutlich mehr Splitter und wurde verworfen. Empfehlung: Schnitt loeschen und Armschnitte selbst ziehen.
+
 ## [1.12.0] - 2026-11-15
 
 ### Hinzugefuegt

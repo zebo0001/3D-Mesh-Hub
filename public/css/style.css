@@ -573,3 +573,10 @@ body.cut-editor-open { overflow: hidden; }
 .cut-draw { display: flex; gap: 0.4rem; align-items: center; flex-wrap: wrap; margin: 0.5rem 0; font-size: 0.82rem; }
 .cut-pick-banner { position: absolute; top: 0.6rem; left: 50%; transform: translateX(-50%); z-index: 5; max-width: 60%; padding: 0.4rem 0.8rem; border-radius: 8px; background: rgba(255,210,63,0.95); color: #1b1e28; font-size: 0.85rem; pointer-events: none; text-align: center; }
 .cut-line-btn { padding: 0.25rem 0.6rem; }
+.part-sw { display: inline-block; width: 0.7rem; height: 0.7rem; border-radius: 3px; margin-right: 0.4rem; vertical-align: -0.05rem; }
+.cut-parts { margin: 0.6rem 0; }
+.cut-parts-head { display: flex; gap: 0.8rem; align-items: center; flex-wrap: wrap; }
+.cut-explode { display: flex; gap: 0.4rem; align-items: center; font-size: 0.8rem; color: var(--muted); }
+.cut-explode[hidden] { display: none; }
+.cut-parts-table tr[data-part]:hover td { background: rgba(255,210,63,0.12); }
+.split-cuts input.cut-dw-in { width: 3.6rem; }

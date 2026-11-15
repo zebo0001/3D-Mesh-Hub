@@ -1,4 +1,4 @@
-import { loadIntoViewer, setUnitScale, setMeasureMode, clearMeasure, setSection, setShading, setModelColor, setView, setBed, BED_PRESETS, setCutPlanes, clearCutPlanes, setCutPickMode } from './viewer.js';
+import { loadIntoViewer, setUnitScale, setMeasureMode, clearMeasure, setSection, setShading, setModelColor, setView, setBed, BED_PRESETS, setCutPlanes, clearCutPlanes, setCutPickMode, fitCamera, showParts, hideParts, setExplode, highlightPart } from './viewer.js';
 import { t, getLang, setLang, applyStaticTranslations, localeTag, sortLocale } from './i18n.js';
 
 const gridEl = document.getElementById('grid');
@@ -848,10 +848,28 @@ center: toFile(c.center_mm), normal: c.normal, radius: (c.diameter_mm / 2) / sc,
 }));
 setCutPlanes(planes, conns);
 };
+const PART_COLORS = ['#e6194b', '#3cb44b', '#4363d8', '#f58231', '#911eb4', '#2bb5b5', '#f032e6', '#bcbd22', '#9a6324', '#800000', '#808000', '#000075', '#e6beff', '#aaffc3'];
+let partsView = false;
+let explode = 0.3;
+const leaveParts = () => { if (partsView) { partsView = false; hideParts(); } };
+const startParts = async () => {
+if (!lastReport || !Array.isArray(lastReport.parts)) return;
+partsView = true;
+renderCuts();
+const o = lastReport.origin_mm;
+const sc = Number(lastReport.scale);
+const ok = await showParts(lastReport.parts.map((p, i) => ({
+url: `/api/files/${f.id}/split/preview/${i + 1}`, bounds_mm: p.bounds_mm, color: PART_COLORS[i % PART_COLORS.length],
+})), o, sc);
+if (!ok) { partsView = false; setCutStatus(t('split.partsFail'), true); renderCuts(); return; }
+setExplode(explode);
+fitCamera();
+};
 const renderCuts = () => {
 const box = q('sp-cuts');
 if (!box || !cutsEdit) return;
 const ext = lastReport.scaled_extents_mm || [];
+const autoD = (i) => { const cn = (lastReport.connectors || []).find((x) => x.cut === i + 1); return cn && !dirty ? n1(cn.diameter_mm) : 'auto'; };
 const rows = cutsEdit.map((c, i) => {
 const a = AX.indexOf(c.axis);
 const range = c.axis === 'free' ? '–' : (ext[a] != null ? `0 – ${n1(ext[a])}` : '');
@@ -861,15 +879,18 @@ return `<tr data-i="${i}" class="${i === activeCut ? 'cut-active' : ''}"><td>${i
 <input type="number" class="cut-pos-in" step="1" value="${c.position_mm}">
 <button type="button" class="cut-btn" data-act="plus" title="${t('split.cutPlus')}">+5</button>
 <button type="button" class="cut-btn" data-act="pick" title="${t('split.cutPickRow')}">⌖</button></td>
-<td>${range}</td><td><button type="button" class="cut-btn" data-act="remove" title="${t('split.cutRemove')}">✕</button></td></tr>`;
+<td>${range}</td><td><input type="number" class="cut-dw-in" min="0" max="40" step="1" placeholder="${autoD(i)}" value="${c.dowel_mm == null ? '' : c.dowel_mm}" title="${t('split.cutDowelTitle')}"></td><td><button type="button" class="cut-btn" data-act="remove" title="${t('split.cutRemove')}">✕</button></td></tr>`;
 }).join('');
 box.innerHTML = `<h4 class="mesh-sub">${t('split.cutsTitle')}</h4>
 <div class="mesh-actions"><button type="button" class="btn-secondary" id="sp-editor">${t('split.cutEditor')}</button></div><p class="hint">${t('split.cutsHint')}</p>
-<table class="mesh-table"><tr><th>#</th><th>${t('split.cutColAxis')}</th><th>${t('split.cutColPos')}</th><th>${t('split.cutColRange')}</th><th></th></tr>${rows}</table>
+<table class="mesh-table"><tr><th>#</th><th>${t('split.cutColAxis')}</th><th>${t('split.cutColPos')}</th><th>${t('split.cutColRange')}</th><th>${t('split.cutColDowel')}</th><th></th></tr>${rows}</table>
 <div class="cut-draw"><button type="button" class="cut-btn cut-line-btn" data-act="line">${t('split.cutLine')}</button></div>
 <div class="cut-add"><select id="sp-add-axis"><option value="x">X</option><option value="y">Y</option><option value="z">Z</option></select>
 <input type="number" id="sp-add-pos" step="1" placeholder="mm">
 <button type="button" class="cut-btn" id="sp-add">${t('split.cutAdd')}</button></div>
+<div class="cut-parts"><div class="cut-parts-head"><button type="button" class="cut-btn" data-act="parts">${partsView ? t('split.partsHide') : t('split.partsShow')}</button>
+<label class="cut-explode" ${partsView ? '' : 'hidden'}>${t('split.explode')} <input type="range" id="sp-explode" min="0" max="1" step="0.01" value="${explode}"></label></div>
+<table class="mesh-table cut-parts-table"><tr><th>${t('split.colPart')}</th><th>${t('split.colSize')}</th><th>${t('split.colVol')}</th></tr>${(lastReport.parts || []).map((p, i) => `<tr data-part="${i}"><td><span class="part-sw" style="background:${PART_COLORS[i % PART_COLORS.length]}"></span>${escapeHtml(p.name)}${p.tiny ? ' ⚠' : ''}</td><td class="${p.fits === false ? 'nofit' : ''}">${p.extents_mm.map(n1).join(' × ')}</td><td>${n1(p.volume_cm3)}</td></tr>`).join('')}</table></div>
 <div class="mesh-actions"><button type="button" class="btn-secondary" id="sp-recalc">${t('split.cutRecalc')}</button>
 <button type="button" class="btn-secondary" id="sp-reset">${t('split.cutReset')}</button></div>`;
 };
@@ -882,6 +903,7 @@ drawPlates();
 };
 // Position aendern; bei freien Ebenen wandert der Referenzpunkt mit der Ebene mit
 const setPos = (i, v) => {
+leaveParts();
 const c = cutsEdit[i];
 const old = Number(c.position_mm);
 c.position_mm = v;
@@ -926,6 +948,7 @@ side.appendChild(cuts);
 shell.appendChild(side);
 document.body.classList.add('cut-editor-open');
 pokeResize();
+setTimeout(() => fitCamera(), 120);
 };
 const closeEditor = () => {
 const shell = shellEl();
@@ -952,6 +975,7 @@ setCutPickMode(null);
 if (pickBanner) { pickBanner.remove(); pickBanner = null; }
 };
 const startLine = (rowIndex) => {
+leaveParts();
 endPick();
 const shell = shellEl();
 if (shell) {
@@ -1000,6 +1024,7 @@ const o = { axis: c.axis, position_mm: Number(c.position_mm) };
 if (Array.isArray(c.anchor)) o.anchor = c.anchor;
 if (Array.isArray(c.region_mm)) o.region_mm = c.region_mm;
 if (Array.isArray(c.near)) o.near = c.near;
+if (c.dowel_mm != null && Number.isFinite(Number(c.dowel_mm))) o.dowel_mm = Number(c.dowel_mm);
 if (c.axis === 'free' && Array.isArray(c.normal)) o.normal = c.normal;
 return o;
 });
@@ -1022,11 +1047,13 @@ if (!b || !cutsEdit) return;
 const i = rowIndex(b);
 if (b.dataset.act === 'minus' && i >= 0) nudge(i, -5);
 else if (b.dataset.act === 'plus' && i >= 0) nudge(i, 5);
-else if (b.dataset.act === 'remove' && i >= 0) { cutsEdit.splice(i, 1); activeCut = -1; dirty = true; renderCuts(); drawPlates(); }
+else if (b.dataset.act === 'parts') { if (partsView) { leaveParts(); renderCuts(); drawPlates(); } else startParts(); }
+else if (b.dataset.act === 'remove' && i >= 0) { leaveParts(); cutsEdit.splice(i, 1); activeCut = -1; dirty = true; renderCuts(); drawPlates(); }
 else if (b.id === 'sp-add') {
 const axis = q('sp-add-axis').value;
 const pos = Number(q('sp-add-pos').value);
 if (q('sp-add-pos').value === '' || !Number.isFinite(pos)) return;
+leaveParts();
 cutsEdit.push({ axis, position_mm: pos, anchor: null, region_mm: null, near: null, normal: null, section: null, size: null });
 dirty = true;
 activeCut = cutsEdit.length - 1;
@@ -1041,6 +1068,12 @@ else if (b.id === 'sp-reset') recompute(false);
 });
 document.addEventListener('input', (ev) => {
 if (!alive() || !ev.target.closest || !ev.target.closest('#sp-cuts')) return;
+if (ev.target.id === 'sp-explode') { explode = Number(ev.target.value); setExplode(explode); return; }
+if (ev.target.classList.contains('cut-dw-in') && cutsEdit) {
+const i = rowIndex(ev.target);
+if (i >= 0) { cutsEdit[i].dowel_mm = ev.target.value === '' ? null : Number(ev.target.value); dirty = true; }
+return;
+}
 if (!ev.target.classList.contains('cut-pos-in') || !cutsEdit) return;
 const i = rowIndex(ev.target);
 if (i < 0) return;
@@ -1054,6 +1087,11 @@ const i = rowIndex(ev.target);
 if (i >= 0) setActive(i);
 });
 document.addEventListener('viewer-ready', () => { if (alive()) drawPlates(); });
+document.addEventListener('mouseover', (ev) => {
+if (!partsView || !alive() || !ev.target.closest) return;
+const tr = ev.target.closest('#sp-cuts tr[data-part]');
+highlightPart(tr ? Number(tr.dataset.part) : -1);
+});
 
 let timer = null;
 const render = (st) => {
@@ -1065,11 +1103,12 @@ if (running) {
 resultEl.innerHTML = `<div class="hint">${t('split.running')}${st.progress ? ' – ' + escapeHtml(st.progress) : ''}</div>`;
 } else if (st.state === 'done') {
 lastReport = st.report || {};
-cutsEdit = (lastReport.cuts || []).map((c) => ({ axis: c.axis, position_mm: c.position_mm, anchor: c.anchor || null, region_mm: c.region_mm || null, near: c.near || null, normal: c.normal || null, section: c.section || null, size: null }));
+cutsEdit = (lastReport.cuts || []).map((c) => ({ axis: c.axis, position_mm: c.position_mm, anchor: c.anchor || null, region_mm: c.region_mm || null, near: c.near || null, normal: c.normal || null, section: c.section || null, size: null, dowel_mm: c.dowel_mm == null ? null : c.dowel_mm }));
 dirty = false;
 activeCut = -1;
 resultEl.innerHTML = reportHtml(lastReport, st.download_url);
 renderCuts();
+if (partsView) { partsView = false; hideParts(); }
 if (editorOpen) {
 const side = document.querySelector('.cut-side');
 const old = side && side.querySelector('#sp-cuts');

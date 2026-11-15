@@ -104,6 +104,11 @@ function validateCuts(raw) {
     }
     if (Array.isArray(c.anchor) && c.anchor.length === 2 && c.anchor.every(finite)) cut.anchor = c.anchor;
     if (Array.isArray(c.region_mm) && c.region_mm.length === 6 && c.region_mm.every(finite)) cut.region_mm = c.region_mm;
+    if (c.dowel_mm !== undefined && c.dowel_mm !== null && c.dowel_mm !== '') {
+      const dm = Number(c.dowel_mm);
+      if (!Number.isFinite(dm) || dm < 0 || dm > 40) return { error: `Schnitt ${i + 1}: Duebel-Durchmesser 0 bis 40 mm` };
+      cut.dowel_mm = dm;
+    }
     if (Array.isArray(c.near) && c.near.length === 3 && c.near.every(finite)) cut.near = c.near;
     cuts.push(cut);
   }
@@ -282,6 +287,25 @@ function register(app, { db, safeResolve }) {
     return startJob('split', req, res, v.params);
   });
   app.get('/api/files/:id/split', (req, res) => pollJob('split', req, res));
+  // Einzelnes Teil in Einbaulage (fuer die Explosionsansicht): <ZIP>/vorschau/Teil-NN.stl
+  app.get('/api/files/:id/split/preview/:n', (req, res) => {
+    const row = getFileRow(req.params.id);
+    if (!row) return res.status(404).end();
+    const n = Number(req.params.n);
+    if (!Number.isInteger(n) || n < 1 || n > 999) return res.status(400).end();
+    const { file } = resultPaths('split', row.id);
+    if (!fs.existsSync(file)) return res.status(404).json({ error: 'Kein Ergebnis vorhanden' });
+    try {
+      const AdmZip = require('adm-zip');
+      const entry = new AdmZip(file).getEntry(`vorschau/Teil-${String(n).padStart(2, '0')}.stl`);
+      if (!entry) return res.status(404).json({ error: 'Keine Vorschau fuer dieses Teil (Ergebnis mit aelterer Version erzeugt)' });
+      res.set('Content-Type', 'model/stl');
+      res.set('Cache-Control', 'no-store');
+      res.send(entry.getData());
+    } catch (e) {
+      res.status(500).json({ error: 'Vorschau konnte nicht gelesen werden' });
+    }
+  });
   app.get('/api/files/:id/split/download', (req, res) => download('split', req, res, '_teile.zip'));
 }
 

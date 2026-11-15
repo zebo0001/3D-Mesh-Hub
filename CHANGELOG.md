@@ -3,6 +3,12 @@
 Alle nennenswerten Aenderungen an 3D Mesh Hub werden hier dokumentiert.
 Das Projekt folgt [Semantic Versioning](https://semver.org/lang/de/) (MAJOR.MINOR.PATCH).
 
+## [1.15.0] - 2026-11-15
+
+### Hinzugefuegt
+- Aufteilen: Schnittlinie per Ziehen zeichnen. Maustaste auf der Figur druecken, ziehen, loslassen; waehrend des Ziehens zeigt eine gelbe Linie die spaetere Ebene live. Mit Umschalt rastet die Linie in 15-Grad-Schritten ein. Die zwei Klicks funktionieren weiterhin (beides ohne Umschalten nutzbar). Gezeichnet wird in der Ansicht; auf die Tiefe kommt es nicht an, weil die Ebene die Blickrichtung enthaelt.
+- Lizenz: README (DE/EN) mit Abschnitt "Lizenz und Namensnennung" (MIT, Copyright Zebo0001, Bitte um Nennung, Hinweis auf Drittlizenzen, insbesondere pymeshfix vor Veroeffentlichung eines Images pruefen), Fusszeile "(c) 2026 Zebo0001 - MIT".
+
 ## [1.14.0] - 2026-11-15
 
 ### Geaendert

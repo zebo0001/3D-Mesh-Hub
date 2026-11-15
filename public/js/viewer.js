@@ -99,8 +99,28 @@ function ensureScene() {
 
   // Klick (kein Ziehen) im Mess-Modus -> Punkt setzen. Ziehen = Orbit/Pan wie gewohnt.
   let downX = 0, downY = 0;
-  renderer.domElement.addEventListener('pointerdown', (ev) => { downX = ev.clientX; downY = ev.clientY; });
+  renderer.domElement.addEventListener('pointerdown', (ev) => {
+    downX = ev.clientX; downY = ev.clientY;
+    // Schnittlinie ziehen: Maustaste auf der Figur druecken, ziehen, loslassen (Orbit ist dabei aus)
+    if (cutPick && cutPickMode === 'line' && linePts.length === 0 && ev.button === 0) {
+      const h = raycastModel(ev);
+      if (h && currentMesh) {
+        dragLine = { p1: currentMesh.worldToLocal(h.point.clone()), sx: ev.clientX, sy: ev.clientY, line: null, marker: null };
+        controls.enabled = false;
+      }
+    }
+  });
+  renderer.domElement.addEventListener('pointermove', (ev) => { if (dragLine) updateDragLine(ev); });
   renderer.domElement.addEventListener('pointerup', (ev) => {
+    if (dragLine) {
+      const d = dragLine;
+      dragLine = null;
+      controls.enabled = true;
+      const moved = Math.hypot(ev.clientX - d.sx, ev.clientY - d.sy);
+      if (moved > 8) { finishDrag(d, ev); return; }
+      clearDragPreview(d);
+      if (moved > 5) return;
+    }
     if (!measureOn && !cutPick) return;
     if (Math.hypot(ev.clientX - downX, ev.clientY - downY) > 5) return;
     if (cutPick) {
@@ -498,19 +518,87 @@ function handleCutClick(lp) {
     return;
   }
   const [p1, p2] = linePts;
+  clearLineMarkers();
+  completeLine(p1, p2);
+}
+
+let dragLine = null;
+
+function markerRadius() {
+  const size = modelBox ? modelBox.getSize(new THREE.Vector3()) : new THREE.Vector3(1, 1, 1);
+  return (Math.max(size.x, size.y, size.z) || 1) * 0.008;
+}
+
+function completeLine(p1, p2) {
+  const r = markerRadius();
   camera.updateMatrixWorld();
   const dirW = camera.getWorldDirection(new THREE.Vector3());
   const dir = dirW.applyQuaternion(currentMesh.getWorldQuaternion(new THREE.Quaternion()).invert());
   const normal = new THREE.Vector3().subVectors(p2, p1).cross(dir);
   const cb = cutPick;
-  if (normal.length() < 1e-6 * (p1.distanceTo(p2) + 1e-9) || p1.distanceTo(p2) < r) {
-    clearLineMarkers();   // Linie ohne Ausdehnung oder parallel zur Blickrichtung: von vorn beginnen
-    return;
-  }
+  if (!cb || normal.length() < 1e-6 * (p1.distanceTo(p2) + 1e-9) || p1.distanceTo(p2) < r) return; // ohne Ausdehnung/parallel zur Blickrichtung: verwerfen
   normal.normalize();
   const mid = new THREE.Vector3().addVectors(p1, p2).multiplyScalar(0.5);
-  clearLineMarkers();
   cb({ p1: p1.toArray(), p2: p2.toArray(), normal: normal.toArray(), mid: mid.toArray() });
+}
+
+// Endpunkt des Ziehens: Strahl unter dem Mauszeiger, geschnitten mit der zur Blickrichtung senkrechten Ebene durch den Startpunkt.
+// Auf die Tiefe kommt es nicht an: die Schnittebene enthaelt die Blickrichtung. Umschalt rastet die Linie in 15-Grad-Schritten ein.
+function dragEnd(d, ev) {
+  let cx = ev.clientX, cy = ev.clientY;
+  if (ev.shiftKey) {
+    const dx = cx - d.sx, dy = cy - d.sy, st = Math.PI / 12;
+    const a = Math.round(Math.atan2(dy, dx) / st) * st;
+    const len = Math.hypot(dx, dy);
+    cx = d.sx + Math.cos(a) * len;
+    cy = d.sy + Math.sin(a) * len;
+  }
+  const rect = renderer.domElement.getBoundingClientRect();
+  const ndc = new THREE.Vector2(((cx - rect.left) / rect.width) * 2 - 1, -((cy - rect.top) / rect.height) * 2 + 1);
+  raycaster.setFromCamera(ndc, camera);
+  const p1w = currentMesh.localToWorld(d.p1.clone());
+  const plane = new THREE.Plane().setFromNormalAndCoplanarPoint(camera.getWorldDirection(new THREE.Vector3()), p1w);
+  const pw = new THREE.Vector3();
+  if (!raycaster.ray.intersectPlane(plane, pw)) return null;
+  return currentMesh.worldToLocal(pw);
+}
+
+function updateDragLine(ev) {
+  const d = dragLine;
+  if (!d || !currentMesh) return;
+  if (Math.hypot(ev.clientX - d.sx, ev.clientY - d.sy) < 4) return;
+  const p2 = dragEnd(d, ev);
+  if (!p2) return;
+  if (!d.line) {
+    d.line = new THREE.Line(new THREE.BufferGeometry().setFromPoints([d.p1, p2]), new THREE.LineBasicMaterial({ color: 0xffe14a, depthTest: false }));
+    d.line.renderOrder = 998;
+    d.line.frustumCulled = false;
+    d.line.userData.cutPlate = true;
+    d.marker = new THREE.Mesh(new THREE.SphereGeometry(markerRadius(), 12, 12), new THREE.MeshBasicMaterial({ color: 0xffe14a, depthTest: false }));
+    d.marker.position.copy(d.p1);
+    d.marker.renderOrder = 999;
+    d.marker.userData.cutPlate = true;
+    currentMesh.add(d.line);
+    currentMesh.add(d.marker);
+  } else {
+    d.line.geometry.setFromPoints([d.p1, p2]);
+  }
+}
+
+function clearDragPreview(d) {
+  for (const o of [d.line, d.marker]) {
+    if (!o) continue;
+    if (o.parent) o.parent.remove(o);
+    o.geometry.dispose();
+    o.material.dispose();
+  }
+}
+
+function finishDrag(d, ev) {
+  clearDragPreview(d);
+  if (!currentMesh || !cutPick) return;
+  const p2 = dragEnd(d, ev);
+  if (p2) completeLine(d.p1, p2);
 }
 
 function pickPoint(ev) {

@@ -269,9 +269,21 @@ empty rows are ignored when saving.
   own machine (no central server) — intended as an open-source tool for
   everyone, not just for personal homelab use.
 
+## License and attribution
+
+MIT license, copyright (c) 2026 Zebo0001 (see `LICENSE`). Free to use, modify and use commercially. The license
+requires that the copyright notice and license text are kept in copies and substantial portions. If you redistribute
+or build on this project, please credit "3D Mesh Hub by Zebo0001" (README, about page or source). A visible credit in
+the running UI cannot be enforced with a free license and is a request.
+
+Third-party components: three.js, Express, better-sqlite3 and others use their own permissive licenses. The optional
+mesh service uses `pymeshfix`, whose license (GPL-3.0 as far as I know, verify before publishing an image) may carry
+its own terms. 3D models (e.g. figures from Cults) have their own licenses from the artist and do not belong in this
+repository.
+
 ## Status / next steps
 
 - [ ] Verify Chromium/Puppeteer rendering in the real container
 - [x] Multi-level folder navigation (explorer view, since 1.7.0)
-- [ ] License decision (proposal: MIT, similar to Filament-Lager) + create repo
-      on Forgejo/GitHub
+- [x] License: MIT with attribution (see License section)
+- [ ] Create repo on Forgejo/GitHub

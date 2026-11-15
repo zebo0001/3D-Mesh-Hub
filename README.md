@@ -270,9 +270,22 @@ Speichern ignoriert.
   (kein zentraler Server) — gedacht als quelloffenes Tool für alle, nicht nur
   für den eigenen Homelab-Gebrauch.
 
+## Lizenz und Namensnennung
+
+MIT-Lizenz, Copyright (c) 2026 Zebo0001 (siehe `LICENSE`). Das Projekt ist frei nutzbar, auch für eigene
+Abwandlungen und kommerziell. Bedingung der Lizenz: Der Copyright-Hinweis samt Lizenztext muss in Kopien und in
+wesentlichen Teilen erhalten bleiben. Wer das Projekt weitergibt oder darauf aufbaut, nennt bitte „3D Mesh Hub von
+Zebo0001" (README, Info-Seite oder Quellcode). Eine sichtbare Nennung in der laufenden Oberfläche lässt sich mit einer
+freien Lizenz nicht erzwingen und ist eine Bitte.
+
+Hinweise zu Drittkomponenten: three.js, Express, better-sqlite3 u. a. stehen unter eigenen, freizügigen Lizenzen. Der
+optionale Mesh-Service nutzt `pymeshfix`, dessen Lizenz (meines Wissens GPL-3.0, vor Veröffentlichung eines Images
+prüfen) eigene Bedingungen haben kann. 3D-Modelle (z. B. Figuren aus Cults) haben eigene Lizenzen des Künstlers und
+gehören nicht in dieses Repository.
+
 ## Stand / Nächste Schritte
 
 - [ ] Chromium/Puppeteer-Rendering im echten Container verifizieren
 - [x] Mehrstufige Ordner-Navigation (Explorer-Ansicht, seit 1.7.0)
-- [ ] Lizenz-Entscheidung (Vorschlag: MIT, analog zu Filament-Lager) + Repo auf
-      Forgejo/GitHub anlegen
+- [x] Lizenz: MIT mit Namensnennung (siehe Abschnitt Lizenz)
+- [ ] Repo auf Forgejo/GitHub anlegen

@@ -19,3 +19,19 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+---
+
+Scope / Geltungsbereich
+
+The MIT License above applies to this repository except for the folder
+`mesh-service/`. That folder contains the optional mesh service, which uses the
+GPL-3.0 licensed library `pymeshfix`; it is therefore licensed under the GNU GPL
+version 3 (see `mesh-service/LICENSE`). The hub (Node.js server and frontend) talks
+to the mesh service only over HTTP, as a separate program.
+
+Die MIT-Lizenz oben gilt fuer dieses Repository mit Ausnahme des Ordners
+`mesh-service/`. Dieser enthaelt den optionalen Mesh-Dienst, der die unter GPL-3.0
+stehende Bibliothek `pymeshfix` nutzt und deshalb unter der GNU GPL Version 3 steht
+(siehe `mesh-service/LICENSE`). Der Hub (Node.js-Server und Frontend) spricht den
+Mesh-Dienst nur per HTTP an, als eigenstaendiges Programm.

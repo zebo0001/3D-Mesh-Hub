@@ -271,15 +271,21 @@ empty rows are ignored when saving.
 
 ## License and attribution
 
-MIT license, copyright (c) 2026 Zebo0001 (see `LICENSE`). Free to use, modify and use commercially. The license
-requires that the copyright notice and license text are kept in copies and substantial portions. If you redistribute
-or build on this project, please credit "3D Mesh Hub by Zebo0001" (README, about page or source). A visible credit in
-the running UI cannot be enforced with a free license and is a request.
+Split license, copyright (c) 2026 Zebo0001:
 
-Third-party components: three.js, Express, better-sqlite3 and others use their own permissive licenses. The optional
-mesh service uses `pymeshfix`, whose license (GPL-3.0 as far as I know, verify before publishing an image) may carry
-its own terms. 3D models (e.g. figures from Cults) have their own licenses from the artist and do not belong in this
-repository.
+- **Hub (server, UI, everything except `mesh-service/`): MIT license** (see `LICENSE`). Free to use, modify and use
+  commercially. The copyright notice and license text must be kept in copies and substantial portions. If you
+  redistribute or build on this project, please credit "3D Mesh Hub by Zebo0001" (README, about page or source). A
+  visible credit in the running UI cannot be enforced with a free license and is a request.
+- **Mesh service (`mesh-service/`): GPL-3.0** (see `mesh-service/LICENSE`) because it uses the library `pymeshfix`
+  (GPL-3.0). The hub talks to it only over HTTP as a separate program. Anyone who redistributes the mesh service or a
+  Docker image of it must do so under GPL-3.0 and provide or offer the source (this folder). The copyright of Zebo0001
+  must be kept there too. Private use in your own homelab carries no obligations.
+
+Third-party components (three.js, Express, better-sqlite3, trimesh, manifold3d and others) use their own permissive
+licenses. PyPI metadata for `pymeshfix` says AGPL while the shipped license file is GPL-3.0; the source is available here
+anyway (public folder). 3D models (e.g. figures from Cults) have their own licenses from the artist and do not belong in
+this repository. This is not legal advice.
 
 ## Status / next steps
 

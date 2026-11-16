@@ -3,6 +3,11 @@
 Alle nennenswerten Aenderungen an 3D Mesh Hub werden hier dokumentiert.
 Das Projekt folgt [Semantic Versioning](https://semver.org/lang/de/) (MAJOR.MINOR.PATCH).
 
+## [1.16.1] - 2026-11-16
+
+### Geaendert
+- Lizenz: zweigeteilt. Hub weiterhin MIT; `mesh-service/` steht unter GPL-3.0, weil es `pymeshfix` (GPL-3.0) nutzt (`mesh-service/LICENSE`, SPDX-Kopfzeilen, Image-Label und Lizenzdatei im Image). Hinweis im Root-`LICENSE`, in beiden READMEs und in der Fusszeile.
+
 ## [1.16.0] - 2026-11-16
 
 ### Geaendert

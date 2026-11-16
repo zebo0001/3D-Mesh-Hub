@@ -24,7 +24,7 @@ import manifold3d as m3
 MIN_PIECE_MM = float(os.environ.get("MIN_PIECE_MM", "20"))   # kleinste erlaubte Teildicke an der Schnittstelle
 SEARCH_WINDOW = float(os.environ.get("SEARCH_WINDOW", "0.12"))  # Suchfenster um die Idealposition (Anteil der Laenge)
 SAMPLES = 41
-MAX_DOWELS = int(os.environ.get("MAX_DOWELS", "5"))   # hoechstens so viele Duebel je Schnittflaeche
+MAX_DOWELS = int(os.environ.get("MAX_DOWELS", "8"))   # hoechstens so viele Duebel je Schnittflaeche
 MAX_PARTS = int(os.environ.get("MAX_PARTS", "200"))
 SPLITTER_MM3 = 1000.0   # Teile kleiner als 1 cm3 werden als Splitter gemeldet
 
@@ -445,14 +445,34 @@ def _spots(polys, r, count):
     ext = float(t.max() - t.min())
     tmid = float(t.min() + t.max()) / 2.0
     ok = lambda q: _point_in_polys(q, polys) and _dist_edges(q, polys) >= r + WALL_MM
+    line = None
     for k in range(int(count), 1, -1):
         s = ext / k
-        while s >= 3.2 * r:
+        while s >= 3.2 * r and line is None:
             cs = [c0 + u * (i - (k - 1) / 2.0) * s for i in range(k)]
             if all(ok(q) for q in cs):
-                return cs
+                line = cs
             s *= 0.94
-    return [q0]
+        if line is not None:
+            break
+    # Unregelmaessiger Querschnitt (z. B. Laengsschnitt durch die ganze Figur): gleichmaessig entlang der Hauptachse
+    # verteilen, je Abschnitt an der Stelle mit dem groessten Randabstand. Es gewinnt die Variante mit mehr Duebeln.
+    good = [(float(tv), p) for tv, p in zip(t, P) if _dist_edges(p, polys) >= r + WALL_MM]
+    slabs = None
+    for k in range(int(count), 1, -1):
+        picks = []
+        for i in range(k):
+            t0, t1 = float(t.min()) + ext * i / k, float(t.min()) + ext * (i + 1) / k
+            slab = [p for tv, p in good if t0 <= tv <= t1]
+            if slab:
+                picks.append(max(slab, key=lambda p: _dist_edges(p, polys)))
+        if len(picks) >= 2 and all(np.hypot(*(picks[i] - picks[j])) >= 3.2 * r for i in range(len(picks)) for j in range(i)):
+            slabs = picks
+            break
+    best = line if line is not None else []
+    if slabs is not None and len(slabs) > len(best):
+        best = slabs
+    return best if len(best) >= 2 else [q0]
 
 
 WALL_MM = 3.0           # Mindestwand um ein Loch (seitlich zum Teilrand)
@@ -481,7 +501,8 @@ def _plan_dowels(first, groups, n, d, frame_back, cfg):
         if r < MIN_RADIUS_MM:
             continue
         count = int(max(1, min(MAX_DOWELS, math.floor(_group_area(g) / (math.pi * (4.0 * r) ** 2)))))
-        for c in _spots(_group_polys(g), r, count):
+        _sp = _spots(_group_polys(g), r, count)
+        for c in _sp:
             plans.append({"center": [float(x) for x in frame_back(c)], "radius": float(r), "depth": float(max(depth_cfg, 2 * r + 3)), "rmax": float(rm)})
     if not plans:
         return [], "Schnittflaeche zu klein fuer einen Duebel"

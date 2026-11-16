@@ -3,6 +3,11 @@
 Alle nennenswerten Aenderungen an 3D Mesh Hub werden hier dokumentiert.
 Das Projekt folgt [Semantic Versioning](https://semver.org/lang/de/) (MAJOR.MINOR.PATCH).
 
+## [1.17.2] - 2026-11-16
+
+### Geaendert
+- Grosse, unregelmaessige Schnittflaechen (z. B. Laengsschnitt durch die Figur) bekommen mehr Duebel: bis zu 8 je zusammenhaengender Flaeche (vorher 5), gleichmaessig entlang der Hauptachse verteilt. Gewaehlt wird die Anordnung (symmetrische Reihe oder gleichmaessig verteilt) mit den meisten Duebeln.
+
 ## [1.17.1] - 2026-11-16
 
 ### Geaendert

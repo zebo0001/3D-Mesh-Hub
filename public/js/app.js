@@ -802,6 +802,7 @@ dw: q('sp-dw').checked, dwd: q('sp-dw-d').value, dwdepth: q('sp-dw-depth').value
 
 const reportHtml = (r, url) => {
 const checks = r.checks || {};
+lastDownloadUrl = url || lastDownloadUrl;
 const fits = !!checks.all_parts_fit;
 const warns = (r.warnings || []).map((w) => `<div class="mesh-warn">${escapeHtml(w)}</div>`).join('');
 const rows = (r.parts || []).map((p) => `<tr><td>${escapeHtml(p.name)}</td><td class="${p.fits === false ? 'nofit' : ''}">${p.extents_mm.map(n1).join(' × ')}${p.fits === false ? ' – ' + t('split.cutNoFit') : ''}</td><td>${n1(p.volume_cm3)}</td><td>${p.flat_cut_face_down ? '✓' : '–'}</td></tr>`).join('');
@@ -826,6 +827,7 @@ let cutsEdit = null;
 let activeCut = -1;
 let dirty = false; // Liste wurde seit der letzten Berechnung geaendert: Umrisse und Duebel sind veraltet
 const dot3 = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+let lastDownloadUrl = null;
 const drawPlates = () => {
 if (!lastReport || !cutsEdit || !editorOpen) { clearCutPlanes(); return; } // Schnittebenen nur im Schnitteditor
 const o = lastReport.origin_mm;
@@ -898,7 +900,8 @@ box.innerHTML = `<h4 class="mesh-sub">${t('split.cutsTitle')}</h4>
 <label class="cut-explode" ${partsView ? '' : 'hidden'}>${t('split.explode')} <input type="range" id="sp-explode" min="0" max="1" step="0.01" value="${explode}"></label></div>
 <table class="mesh-table cut-parts-table"><tr><th>${t('split.colPart')}</th><th>${t('split.colSize')}</th><th>${t('split.colVol')}</th></tr>${(lastReport.parts || []).map((p, i) => `<tr data-part="${i}"><td><span class="part-sw" style="background:${PART_COLORS[i % PART_COLORS.length]}"></span>${escapeHtml(p.name)}${p.tiny ? ' ⚠' : ''}</td><td class="${p.fits === false ? 'nofit' : ''}">${p.extents_mm.map(n1).join(' × ')}</td><td>${n1(p.volume_cm3)}</td></tr>`).join('')}</table></div>
 <div class="mesh-actions"><button type="button" class="btn-secondary" id="sp-recalc">${t('split.cutRecalc')}</button>
-<button type="button" class="btn-secondary" id="sp-reset">${t('split.cutReset')}</button></div>`;
+<button type="button" class="btn-secondary" id="sp-reset">${t('split.cutReset')}</button>
+${lastDownloadUrl ? `<a class="btn-secondary" id="sp-ed-download" href="${lastDownloadUrl}" download>${t('split.download')}</a>` : ''}</div>`;
 updateBedInfo();
 };
 const updateBedInfo = () => {

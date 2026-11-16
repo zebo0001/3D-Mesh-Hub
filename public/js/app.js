@@ -722,6 +722,7 @@ function splitBoxHtml() {
 const presets = BED_PRESETS.map((p) => `<option value="${p.id}">${escapeHtml(p.name)} (${p.x}×${p.z}×${p.h})</option>`).join('');
 return `<div class="split-box"><h4 class="mesh-sub">${t('split.title')}</h4>
 <p class="hint">${t('split.intro')}</p>
+<details class="sp-sec" id="sp-settings" open><summary><span>${t('split.settings')}</span><span class="sp-sum" id="sp-settings-sum"></span></summary><div class="sp-sec-body">
 <div class="split-form">
 <label>${t('split.printer')}<select id="sp-printer">${presets}<option value="custom">${t('split.custom')}</option></select></label>
 <span id="sp-custom" hidden>
@@ -741,6 +742,7 @@ return `<div class="split-box"><h4 class="mesh-sub">${t('split.title')}</h4>
 <label>${t('split.dowelDepth')}<input type="number" id="sp-dw-depth" min="5" max="60" step="1" value="15"></label>
 <label>${t('split.dowelClear')}<input type="number" id="sp-dw-clear" min="0" max="2" step="0.05" value="0.3"></label>
 </div>
+</div></details>
 <div class="mesh-actions"><button type="button" class="btn-secondary" id="sp-start">${t('split.start')}</button></div>
 <div id="sp-result"></div></div>`;
 }
@@ -775,8 +777,19 @@ depth_mm: q('sp-dw-depth').value === '' ? 15 : Number(q('sp-dw-depth').value),
 clearance_mm: q('sp-dw-clear').value === '' ? 0.3 : Number(q('sp-dw-clear').value),
 });
 const syncCustom = () => { q('sp-custom').hidden = printerSel.value !== 'custom'; };
+const updateSettingsSummary = () => {
+const el = q('sp-settings-sum');
+if (!el) return;
+const pn = (printerSel.selectedOptions[0] || {}).textContent || '';
+const sc = q('sp-scale').value !== '' ? `×${q('sp-scale').value}` : `${q('sp-height').value} mm`;
+const dw = q('sp-dw').checked ? (Number(q('sp-dw-d').value) > 0 ? `Ø${q('sp-dw-d').value}` : t('split.dowelAuto')) : t('split.dowelOff');
+el.textContent = [pn.replace(/\s*\(.*\)$/, ''), `${t('split.margin').replace(/\s*\(.*\)$/, '')} ${q('sp-margin').value}`, sc, `${t('split.dowelShort')} ${dw}`].join(' · ');
+};
+for (const id of ['sp-printer', 'sp-bx', 'sp-by', 'sp-bz', 'sp-margin', 'sp-height', 'sp-scale', 'sp-dw', 'sp-dw-d']) q(id).addEventListener('input', updateSettingsSummary);
+q('sp-printer').addEventListener('change', updateSettingsSummary);
 printerSel.addEventListener('change', syncCustom);
 syncCustom();
+updateSettingsSummary();
 
 const readInput = () => {
 let bed;
@@ -823,11 +836,13 @@ const rows = (r.parts || []).map((p) => `<tr><td>${escapeHtml(p.name)}</td><td c
 const e = r.scaled_extents_mm || [];
 const b = r.bed_usable_mm || [];
 return `<div class="mesh-result ${fits ? 'ok' : 'warn'}">${fits ? t('split.done', { n: r.part_count }) : t('split.doneNoFit', { n: r.part_count })}</div>
-<div class="hint">${t('split.facts', { scale: Number(r.scale).toLocaleString(localeTag(), { maximumFractionDigits: 3 }), w: n1(e[0]), h: n1(e[1]), d: n1(e[2]), bw: n1(b[0]), bd: n1(b[1]), bh: n1(b[2]) })}</div>
+
 <div class="scale-line"><b>${t('split.scaleLine', { s: Number(r.scale).toLocaleString(localeTag(), { maximumFractionDigits: 4 }), m: n1(r.model_height_mm), h: n1(Number(r.model_height_mm) * Number(r.scale)) })}</b>${scalePicks(r)}</div>
+<details class="sp-more"><summary>${t('split.moreInfo')}</summary>
+<div class="hint">${t('split.facts', { scale: Number(r.scale).toLocaleString(localeTag(), { maximumFractionDigits: 3 }), w: n1(e[0]), h: n1(e[1]), d: n1(e[2]), bw: n1(b[0]), bd: n1(b[1]), bh: n1(b[2]) })}</div>
 ${r.manual ? `<div class="hint">${t('split.cutManual')}</div>` : ''}
 ${(r.connectors || []).length ? `<div class="hint">${t('split.dowels', { n: r.connectors.length, d: rng(r.connectors.map((x) => x.diameter_mm)), c: n1(r.connectors[0].clearance_mm), l: rng(r.connectors.map((x) => x.dowel_length_mm)), depth: rng(r.connectors.flatMap((x) => [x.depth_below_mm ?? x.depth_mm, x.depth_above_mm ?? x.depth_mm])) })}</div>` : ''}
-<div class="hint">${t('split.up', { axis: String(r.up_axis || '').toUpperCase(), how: r.up_axis_auto ? t('split.upAuto') : t('split.upSet') })}</div>
+<div class="hint">${t('split.up', { axis: String(r.up_axis || '').toUpperCase(), how: r.up_axis_auto ? t('split.upAuto') : t('split.upSet') })}</div></details>
 <div class="split-cuts" id="sp-cuts"></div>
 <table class="mesh-table"><tr><th>${t('split.colPart')}</th><th>${t('split.colSize')}</th><th>${t('split.colVol')}</th><th>${t('split.colFlat')}</th></tr>${rows}</table>
 ${warns}
@@ -869,6 +884,7 @@ setCutPlanes(planes, conns);
 const PART_COLORS = ['#e6194b', '#3cb44b', '#4363d8', '#f58231', '#911eb4', '#2bb5b5', '#f032e6', '#bcbd22', '#9a6324', '#800000', '#808000', '#000075', '#e6beff', '#aaffc3'];
 let partsView = false;
 let explode = 0.3;
+const secOpen = { cuts: true, parts: true };
 let bedView = false;
 let bedIdx = 0;
 let bedInfo = '';
@@ -901,6 +917,11 @@ if (!ok) { partsView = false; setCutStatus(t('split.partsFail'), true); renderCu
 setExplode(explode);
 fitCamera();
 };
+document.addEventListener('toggle', (ev) => {
+if (!alive()) return;
+const d = ev.target;
+if (d && d.dataset && d.dataset.sec && d.dataset.sec in secOpen) secOpen[d.dataset.sec] = d.open;
+}, true);
 const renderCuts = () => {
 const box = q('sp-cuts');
 if (!box || !cutsEdit) return;
@@ -917,24 +938,28 @@ return `<tr data-i="${i}" class="${i === activeCut ? 'cut-active' : ''}"><td>${i
 <button type="button" class="cut-btn" data-act="pick" title="${t('split.cutPickRow')}">⌖</button></td>
 <td>${range}</td><td><input type="number" class="cut-dw-in" min="0" max="40" step="1" placeholder="${autoD(i)}" value="${c.dowel_mm == null ? '' : c.dowel_mm}" title="${t('split.cutDowelTitle')}"></td><td><button type="button" class="cut-btn" data-act="remove" title="${t('split.cutRemove')}">✕</button></td></tr>`;
 }).join('');
+const parts = lastReport.parts || [];
+const partRows = parts.map((p, i) => `<tr data-part="${i}"><td><span class="part-sw" style="background:${PART_COLORS[i % PART_COLORS.length]}"></span>${escapeHtml(p.name)}${p.tiny ? ' ⚠' : ''}</td><td class="${p.fits === false ? 'nofit' : ''}">${p.extents_mm.map(n1).join(' × ')}</td><td>${n1(p.volume_cm3)}</td></tr>`).join('');
 box.innerHTML = `<h4 class="mesh-sub">${t('split.cutsTitle')}</h4>
 <div class="mesh-actions"><button type="button" class="btn-secondary" id="sp-editor">${t('split.cutEditor')}</button></div>
-<div class="cut-bed"><label>${t('split.printer')} <select id="sp-ed-printer">${[...printerSel.options].map((o) => `<option value="${o.value}"${o.value === printerSel.value ? ' selected' : ''}>${escapeHtml(o.textContent)}</option>`).join('')}</select></label>
-<span class="cut-bed-custom" ${printerSel.value === 'custom' ? '' : 'hidden'}>X <input type="number" id="sp-ed-bx" min="50" max="2000" value="${q('sp-bx').value}"> Y <input type="number" id="sp-ed-by" min="50" max="2000" value="${q('sp-by').value}"> Z <input type="number" id="sp-ed-bz" min="50" max="2000" value="${q('sp-bz').value}"></span>
-<div class="hint" id="sp-ed-bedinfo"></div></div>
-<p class="hint">${t('split.cutsHint')}</p>
+<div class="hint" id="sp-ed-bedinfo"></div>
+<details class="sp-sec" data-sec="cuts" ${secOpen.cuts ? 'open' : ''}><summary><span>${t('split.cutsTitle')}</span><span class="sp-sum">${cutsEdit.length}</span></summary><div class="sp-sec-body">
+<details class="sp-more"><summary>${t('split.help')}</summary><p class="hint">${t('split.cutsHint')}</p></details>
 <table class="mesh-table"><tr><th>#</th><th>${t('split.cutColAxis')}</th><th>${t('split.cutColPos')}</th><th>${t('split.cutColRange')}</th><th>${t('split.cutColDowel')}</th><th></th></tr>${rows}</table>
-<div class="cut-draw"><button type="button" class="cut-btn cut-line-btn" data-act="line">${t('split.cutLine')}</button></div>
-<div class="cut-add"><select id="sp-add-axis"><option value="x">X</option><option value="y">Y</option><option value="z">Z</option></select>
+<div class="cut-draw"><button type="button" class="cut-btn cut-line-btn" data-act="line">${t('split.cutLine')}</button>
+<span class="cut-add"><select id="sp-add-axis"><option value="x">X</option><option value="y">Y</option><option value="z">Z</option></select>
 <input type="number" id="sp-add-pos" step="1" placeholder="mm">
-<button type="button" class="cut-btn" id="sp-add">${t('split.cutAdd')}</button></div>
-<div class="cut-parts"><div class="cut-parts-head"><button type="button" class="cut-btn" data-act="parts">${partsView ? t('split.partsHide') : t('split.partsShow')}</button>
+<button type="button" class="cut-btn" id="sp-add">${t('split.cutAdd')}</button></span></div>
+</div></details>
+<details class="sp-sec" data-sec="parts" ${secOpen.parts ? 'open' : ''}><summary><span>${t('split.secParts')}</span><span class="sp-sum">${parts.length}</span></summary><div class="sp-sec-body">
+<div class="cut-parts-head"><button type="button" class="cut-btn" data-act="parts">${partsView ? t('split.partsHide') : t('split.partsShow')}</button>
+<button type="button" class="cut-btn" data-act="bed">${bedView ? t('split.bedHide') : t('split.bedShow')}</button>
+<span class="bed-nav" ${bedView ? '' : 'hidden'}><button type="button" class="cut-btn" data-act="bedprev">◀</button> ${escapeHtml((parts[bedIdx] || {}).name || '')} <button type="button" class="cut-btn" data-act="bednext">▶</button></span>
 <label class="cut-explode" ${partsView ? '' : 'hidden'}>${t('split.explode')} <input type="range" id="sp-explode" min="0" max="1" step="0.01" value="${explode}"></label></div>
-<table class="mesh-table cut-parts-table"><tr><th>${t('split.colPart')}</th><th>${t('split.colSize')}</th><th>${t('split.colVol')}</th></tr>${(lastReport.parts || []).map((p, i) => `<tr data-part="${i}"><td><span class="part-sw" style="background:${PART_COLORS[i % PART_COLORS.length]}"></span>${escapeHtml(p.name)}${p.tiny ? ' ⚠' : ''}</td><td class="${p.fits === false ? 'nofit' : ''}">${p.extents_mm.map(n1).join(' × ')}</td><td>${n1(p.volume_cm3)}</td></tr>`).join('')}</table></div>
-<div class="bedview"><button type="button" class="cut-btn" data-act="bed">${bedView ? t('split.bedHide') : t('split.bedShow')}</button>
-<span ${bedView ? '' : 'hidden'}><button type="button" class="cut-btn" data-act="bedprev">◀</button> ${escapeHtml(((lastReport.parts || [])[bedIdx] || {}).name || '')} <button type="button" class="cut-btn" data-act="bednext">▶</button></span>
-<div class="hint">${bedView ? escapeHtml(bedInfo) : t('split.bedHint')}</div></div>
-<div class="mesh-actions"><button type="button" class="btn-secondary" id="sp-recalc">${t('split.cutRecalc')}</button>
+${bedView ? `<div class="hint">${escapeHtml(bedInfo)}</div>` : ''}
+<table class="mesh-table cut-parts-table"><tr><th>${t('split.colPart')}</th><th>${t('split.colSize')}</th><th>${t('split.colVol')}</th></tr>${partRows}</table>
+</div></details>
+<div class="cut-actions"><button type="button" class="btn-primary-ed" id="sp-recalc">${t('split.cutRecalc')}</button>
 <button type="button" class="btn-secondary" id="sp-reset">${t('split.cutReset')}</button>
 ${lastDownloadUrl ? `<a class="btn-secondary" id="sp-ed-download" href="${lastDownloadUrl}" download>${t('split.download')}</a>` : ''}</div>`;
 updateBedInfo();
@@ -979,6 +1004,7 @@ drawPlates();
 // ---- Vollbild-Editor: der Viewer wird gross, die Schnittliste wandert in eine Seitenleiste ----
 let editorOpen = false;
 let shellHome = null;
+let settingsWasOpen = true;
 let cutsHome = null; // wohin #sp-cuts beim Schliessen zurueckkehrt
 const shellEl = () => document.querySelector('.viewer-shell.cut-editor') || document.querySelector('.viewer-shell');
 const pokeResize = () => setTimeout(() => window.dispatchEvent(new Event('resize')), 30);
@@ -999,6 +1025,8 @@ shell.classList.add('cut-editor');
 const side = document.createElement('div');
 side.className = 'cut-side';
 side.innerHTML = `<div class="cut-side-head"><strong>${t('split.cutsTitle')}</strong><button type="button" class="cut-btn" id="sp-editor-close">${t('split.cutClose')}</button></div><div id="sp-cut-status" class="hint"></div>`;
+const stg = q('sp-settings');
+if (stg) { settingsWasOpen = stg.open; stg.open = !lastReport; } // im Editor zunaechst eingeklappt (Zusammenfassung bleibt sichtbar)
 side.appendChild(box);
 shell.appendChild(side);
 document.body.classList.add('cut-editor-open');
@@ -1014,6 +1042,8 @@ leaveParts();
 endPick();
 drawPlates();
 const side = shell && shell.querySelector('.cut-side');
+const stg = q('sp-settings');
+if (stg) stg.open = settingsWasOpen;
 const box = document.querySelector('.split-box');
 if (box && cutsHome && cutsHome.parent && document.body.contains(cutsHome.parent)) cutsHome.parent.insertBefore(box, cutsHome.next && cutsHome.next.parentNode === cutsHome.parent ? cutsHome.next : null);
 cutsHome = null;

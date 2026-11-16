@@ -3,6 +3,11 @@
 Alle nennenswerten Aenderungen an 3D Mesh Hub werden hier dokumentiert.
 Das Projekt folgt [Semantic Versioning](https://semver.org/lang/de/) (MAJOR.MINOR.PATCH).
 
+## [1.20.0] - 2026-11-17
+
+### Geaendert
+- Schnitteditor: uebersichtlicheres, moderneres Menue. Einstellungen (Drucker, Rand, Hoehe, Maßstab, Duebel) sind einklappbar und zeigen eine Zusammenfassung; Schnitte und Teile sind eigene einklappbare Karten (Zustand bleibt beim Neuberechnen erhalten); Erklaertexte stehen hinter "Details & Hinweise" bzw. "Hilfe"; Hauptaktion ("Mit diesen Schnitten neu berechnen") sitzt in einer fixen Fusszeile mit den Nebenaktionen.
+
 ## [1.19.1] - 2026-11-16
 
 ### Geaendert

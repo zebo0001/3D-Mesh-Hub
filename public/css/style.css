@@ -593,3 +593,44 @@ body.cut-editor-open { overflow: hidden; }
 .cut-side .cut-bed > label, .cut-side .cut-bed-custom { display: none; }
 .cut-side .split-form { gap: 0.4rem 0.8rem; margin: 0.4rem 0; }
 .cut-side .split-form label { font-size: 0.8rem; }
+
+/* ---- Aufteilen / Schnitteditor: einklappbare Abschnitte (v1.20) ---- */
+.sp-sec { border: 1px solid var(--border); border-radius: 10px; background: var(--panel-2); margin: 0.6rem 0; }
+.sp-sec > summary { list-style: none; cursor: pointer; display: flex; align-items: center; gap: 0.55rem; padding: 0.55rem 0.8rem; font-weight: 600; font-size: 0.9rem; user-select: none; }
+.sp-sec > summary::-webkit-details-marker { display: none; }
+.sp-sec > summary::before { content: '›'; display: inline-block; width: 0.8rem; color: var(--muted); font-size: 1.15rem; line-height: 1; transition: transform 0.15s; }
+.sp-sec[open] > summary::before { transform: rotate(90deg); }
+.sp-sec > summary:hover { background: rgba(127, 127, 127, 0.08); border-radius: 10px; }
+.sp-sum { margin-left: auto; font-weight: 400; font-size: 0.75rem; color: var(--muted); text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 65%; }
+.sp-sec-body { padding: 0.1rem 0.8rem 0.8rem; }
+.sp-more { margin: 0.35rem 0; font-size: 0.82rem; }
+.sp-more > summary { cursor: pointer; color: var(--muted); list-style: none; padding: 0.15rem 0; user-select: none; }
+.sp-more > summary::-webkit-details-marker { display: none; }
+.sp-more > summary::before { content: '＋ '; }
+.sp-more[open] > summary::before { content: '－ '; }
+.sp-more > .hint { margin: 0.3rem 0; }
+.sp-settings .split-form, #sp-settings .split-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(7.5rem, 1fr)); gap: 0.6rem 0.8rem; margin: 0.5rem 0; }
+#sp-settings .split-form > label:first-child, #sp-settings .split-form > .vt-check, #sp-settings #sp-custom { grid-column: 1 / -1; }
+#sp-settings .split-form input, #sp-settings .split-form select { width: 100%; box-sizing: border-box; }
+#sp-settings .split-form input[type="checkbox"] { width: auto; }
+.btn-primary-ed { background: linear-gradient(135deg, var(--accent), var(--accent-2)); color: #fff; border: 0; border-radius: 8px; padding: 0.5rem 0.95rem; font: inherit; font-weight: 600; cursor: pointer; }
+.btn-primary-ed:hover { filter: brightness(1.1); }
+.cut-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center; margin: 0.8rem 0; }
+.cut-side .cut-actions { position: sticky; bottom: -0.8rem; z-index: 3; margin: 0.8rem -1rem -0.8rem; padding: 0.7rem 1rem; background: var(--panel); border-top: 1px solid var(--border); }
+.cut-side-head { position: sticky; top: -0.8rem; z-index: 3; margin: -0.8rem -1rem 0.5rem; padding: 0.7rem 1rem; background: var(--panel); border-bottom: 1px solid var(--border); }
+.cut-side .split-box > .mesh-actions { margin: 0.5rem 0; }
+.cut-side #sp-result > .mesh-table, .cut-side #sp-result > .mesh-actions, .cut-side #sp-result > .hint { display: none; }
+.cut-side #sp-cuts > .mesh-actions, .cut-side #sp-cuts > h4 { display: none; }
+.cut-side .cut-draw { margin: 0.6rem 0 0; }
+.cut-side .cut-add { display: inline-flex; gap: 0.3rem; align-items: center; margin-left: auto; }
+.cut-side .cut-parts-head { margin-bottom: 0.4rem; }
+.cut-side .bed-nav { display: inline-flex; gap: 0.3rem; align-items: center; font-size: 0.82rem; }
+.cut-side .bed-nav[hidden] { display: none; }
+.cut-side .mesh-result { border-radius: 8px; padding: 0.45rem 0.7rem; }
+.cut-side .scale-line { margin: 0.5rem 0; }
+.cut-side .mesh-table { font-size: 0.82rem; }
+.cut-side .mesh-table th, .cut-side .mesh-table td { padding: 0.28rem 0.35rem; }
+.cut-actions .btn-secondary { background: var(--panel-2); color: var(--text); border: 1px solid var(--border); border-radius: 8px; padding: 0.45rem 0.8rem; cursor: pointer; font-family: inherit; font-size: 0.85rem; text-decoration: none; display: inline-block; }
+.cut-actions .btn-secondary:hover { border-color: var(--accent); }
+.cut-side .cut-actions { gap: 0.4rem; }
+.cut-side .cut-actions .btn-primary-ed { flex: 1 1 100%; }

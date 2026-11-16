@@ -3,6 +3,14 @@
 Alle nennenswerten Aenderungen an 3D Mesh Hub werden hier dokumentiert.
 Das Projekt folgt [Semantic Versioning](https://semver.org/lang/de/) (MAJOR.MINOR.PATCH).
 
+## [1.19.1] - 2026-11-16
+
+### Geaendert
+- Schnitteditor (Vollbild): das komplette Aufteilen-Menue (Drucker, Rand, Hoehe, Maßstab, Duebel, "Aufteilen", Ergebnis mit Rundwerten) wandert in den Editor, sodass man zum Neuteilen nicht mehr hinaus- und hineinmuss.
+
+### Behoben
+- Der Schliessen-Button im Schnitteditor reagierte nicht (nur Esc); er lag ausserhalb des Bereichs, auf den der Klick-Handler lauschte.
+
 ## [1.19.0] - 2026-11-16
 
 ### Neu

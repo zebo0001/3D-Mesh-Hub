@@ -589,3 +589,7 @@ body.cut-editor-open { overflow: hidden; }
 .bedview { margin: 0.6rem 0; display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; }
 .bedview .hint { flex-basis: 100%; margin: 0; }
 .bedview span[hidden] { display: none; }
+.cut-side .split-box > h4, .cut-side .split-box > .hint { display: none; }
+.cut-side .cut-bed > label, .cut-side .cut-bed-custom { display: none; }
+.cut-side .split-form { gap: 0.4rem 0.8rem; margin: 0.4rem 0; }
+.cut-side .split-form label { font-size: 0.8rem; }

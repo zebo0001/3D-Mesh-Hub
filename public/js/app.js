@@ -988,10 +988,10 @@ if (el) { el.textContent = text || ''; el.className = warn ? 'mesh-warn' : 'hint
 };
 const openEditor = () => {
 const shell = shellEl();
-const cuts = q('sp-cuts');
-if (!shell || !cuts || editorOpen) return;
+const box = document.querySelector('.split-box');
+if (!shell || !box || editorOpen) return;
 editorOpen = true;
-cutsHome = { parent: cuts.parentNode, next: cuts.nextSibling };
+cutsHome = { parent: box.parentNode, next: box.nextSibling }; // ganzer Aufteilen-Bereich (Formular + Ergebnis) wandert in den Editor
 shellHome = document.createComment('viewer-shell');
 shell.parentNode.insertBefore(shellHome, shell);
 document.body.appendChild(shell); // aus dem Detail-Fenster loesen, damit Vollbild wirklich den Bildschirm fuellt
@@ -999,7 +999,7 @@ shell.classList.add('cut-editor');
 const side = document.createElement('div');
 side.className = 'cut-side';
 side.innerHTML = `<div class="cut-side-head"><strong>${t('split.cutsTitle')}</strong><button type="button" class="cut-btn" id="sp-editor-close">${t('split.cutClose')}</button></div><div id="sp-cut-status" class="hint"></div>`;
-side.appendChild(cuts);
+side.appendChild(box);
 shell.appendChild(side);
 document.body.classList.add('cut-editor-open');
 pokeResize();
@@ -1014,8 +1014,9 @@ leaveParts();
 endPick();
 drawPlates();
 const side = shell && shell.querySelector('.cut-side');
-const cuts = document.getElementById('sp-cuts');
-if (cuts && cutsHome && cutsHome.parent && document.body.contains(cutsHome.parent)) cutsHome.parent.insertBefore(cuts, cutsHome.next && cutsHome.next.parentNode === cutsHome.parent ? cutsHome.next : null);
+const box = document.querySelector('.split-box');
+if (box && cutsHome && cutsHome.parent && document.body.contains(cutsHome.parent)) cutsHome.parent.insertBefore(box, cutsHome.next && cutsHome.next.parentNode === cutsHome.parent ? cutsHome.next : null);
+cutsHome = null;
 if (side) side.remove();
 if (shell) {
 shell.classList.remove('cut-editor');
@@ -1027,6 +1028,15 @@ document.body.classList.remove('cut-editor-open');
 pokeResize();
 };
 document.addEventListener('keydown', (ev) => { if (ev.key === 'Escape' && editorOpen && alive()) closeEditor(); });
+document.addEventListener('click', (ev) => {
+if (editorOpen && alive() && ev.target.closest && ev.target.closest('#sp-editor-close')) closeEditor();
+});
+// Drucker/Rand im Formular geaendert, waehrend der Editor offen ist: Bettinfo und Bettansicht nachziehen
+document.addEventListener('change', (ev) => {
+if (!editorOpen || !alive() || !ev.target.id || !['sp-printer', 'sp-bx', 'sp-by', 'sp-bz', 'sp-margin'].includes(ev.target.id)) return;
+updateBedInfo();
+if (bedView) showBed();
+});
 // ---- Einzeichnen: zwei Klicks auf die Figur = Schnittlinie; die Ebene geht durch die Linie in Blickrichtung ----
 let pickBanner = null;
 const endPick = () => {
@@ -1184,10 +1194,6 @@ renderCuts();
 leaveBed();
 if (partsView) { partsView = false; hideParts(); }
 if (editorOpen) {
-const side = document.querySelector('.cut-side');
-const old = side && side.querySelector('#sp-cuts');
-const fresh = resultEl.querySelector('#sp-cuts');
-if (old && fresh) { cutsHome = { parent: fresh.parentNode, next: fresh.nextSibling }; old.replaceWith(fresh); }
 const ok = (lastReport.checks || {}).all_parts_fit;
 setCutStatus(ok ? t('split.done', { n: lastReport.part_count }) : t('split.doneNoFit', { n: lastReport.part_count }), !ok);
 }

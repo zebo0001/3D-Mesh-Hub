@@ -432,7 +432,7 @@ def _spots(polys, r, count):
     for x in np.arange(lo[0], hi[0] + step, step):
         for y in np.arange(lo[1], hi[1] + step, step):
             q = np.array([x, y])
-            if _point_in_polys(q, polys) and _dist_edges(q, polys) >= r + 2.5:
+            if _point_in_polys(q, polys) and _dist_edges(q, polys) >= r + WALL_MM:
                 cand.append(q)
     while len(centers) < count and cand:
         C = np.array(centers)
@@ -445,8 +445,17 @@ def _spots(polys, r, count):
     return centers
 
 
+WALL_MM = 3.0           # Mindestwand um ein Loch (seitlich zum Teilrand)
+BACK_WALL_MM = 2.0      # Mindestwand hinter dem Lochgrund
+MIN_DEPTH_MM = 6.0
+MIN_RADIUS_MM = 2.5
+
+
 def _plan_dowels(first, groups, n, d, frame_back, cfg):
-    """Duebel fuer einen Schnitt: je zusammenhaengender Schnittflaeche mindestens einer, bei grossen Flaechen mehrere."""
+    """Duebel fuer einen Schnitt: je zusammenhaengender Schnittflaeche mindestens einer, bei grossen Flaechen mehrere.
+
+    Groesse automatisch nach dem Querschnitt (Radius ca. 30 % des Randabstands, 2,5 bis 10 mm), Zieltiefe 2 r + 3 mm
+    (mindestens die eingestellte Tiefe). Ob das in beiden Teilen Platz hat, prueft _fit_dowel."""
     if not groups:
         return [], "kein Querschnitt"
     poles = [(_pole(_group_polys(g)), g) for g in groups]
@@ -454,27 +463,61 @@ def _plan_dowels(first, groups, n, d, frame_back, cfg):
     if not poles:
         return [], "Schnittflaeche zu klein fuer einen Duebel"
     diam = float(cfg.get("diameter_mm") or 0)
-    rmax_all = max(rm for _, rm, _ in poles)
-    r_cut = diam / 2.0 if diam > 0 else min(rmax_all * 0.5, 6.0)
-    depth = float(cfg.get("depth_mm", 15))
-    lo, hi = _bounds(first)
-    corners = np.array([[x, y, z] for x in (lo[0], hi[0]) for y in (lo[1], hi[1]) for z in (lo[2], hi[2])])
-    proj = corners @ n
-    thick = float(max(abs(proj.max() - d), abs(d - proj.min())))
-    depth = min(depth, thick - 4.0)
-    if depth < 6.0:
-        return [], "Teil zu duenn fuer einen Duebel"
+    depth_cfg = float(cfg.get("depth_mm", 15))
     plans = []
     for q, rm, g in poles:
-        r = min(r_cut, rm - 1.5)
-        if r < 2.0 or rm < 4.0:
+        r = diam / 2.0 if diam > 0 else min(max(0.3 * rm, MIN_RADIUS_MM), 10.0)
+        r = min(r, rm - WALL_MM)
+        if r < MIN_RADIUS_MM:
             continue
         count = int(max(1, min(MAX_DOWELS, math.floor(_group_area(g) / (math.pi * (4.0 * r) ** 2)))))
         for c in _spots(_group_polys(g), r, count):
-            plans.append({"center": [float(x) for x in frame_back(c)], "radius": float(r), "depth": float(depth), "rmax": float(rm)})
+            plans.append({"center": [float(x) for x in frame_back(c)], "radius": float(r), "depth": float(max(depth_cfg, 2 * r + 3)), "rmax": float(rm)})
     if not plans:
         return [], "Schnittflaeche zu klein fuer einen Duebel"
     return plans, None
+
+
+def _fit_dowel(plan, children, n, d, clearance, sides=None):
+    """Passt den Duebel an den tatsaechlichen Platz an: je Teil die Lochtiefe, gemeinsam den Radius.
+
+    Pruefkoerper: Zylinder (Loch + Wand) muss ganz im Material liegen. Zuerst Tiefe verkuerzen (bis 6 mm), dann den Radius
+    um 15 % verkleinern (bis 2,5 mm). Gibt None zurueck, wenn nirgends Platz ist."""
+    c = np.asarray(plan["center"], dtype=float)
+    by_side = {"below": [], "above": []}
+    for ci, (comp, _f) in enumerate(children):
+        side = sides[ci] if sides else _side_of(comp, n, d)
+        if side in by_side:
+            by_side[side].append(comp)
+    if not by_side["below"] or not by_side["above"]:
+        return None
+    r = plan["radius"]
+    while r >= MIN_RADIUS_MM - 1e-9:
+        rt = r + clearance / 2.0 + WALL_MM / 2.0
+        depths = {}
+        for side, comps in by_side.items():
+            found = None
+            for dep in np.arange(plan["depth"], MIN_DEPTH_MM - 0.01, -2.0):
+                L = dep + BACK_WALL_MM - 0.3
+                if side == "below":
+                    test = _cylinder(c - n * 0.3, n, L, 0.0, rt)
+                else:
+                    test = _cylinder(c + n * 0.3, n, 0.0, L, rt)
+                vt = float(test.volume())
+                if any(float((comp ^ test).volume()) >= 0.985 * vt for comp in comps):
+                    found = float(dep)
+                    break
+            if found is None:
+                break
+            depths[side] = found
+        if len(depths) == 2:
+            out = dict(plan)
+            out["radius"] = float(r)
+            out["depth_below"], out["depth_above"] = depths["below"], depths["above"]
+            out["depth"] = max(depths.values())
+            return out
+        r *= 0.85
+    return None
 
 
 def _connect(first, spec, n, d, children, cfg, report_extra, groups=None, sides=None):
@@ -490,6 +533,12 @@ def _connect(first, spec, n, d, children, cfg, report_extra, groups=None, sides=
     if not plans:
         return children, 0.0, [], why
     clearance = float(cfg.get("clearance_mm", 0.3))
+    planned = len(plans)
+    plans = [p for p in (_fit_dowel(p, children, n, d, clearance, sides) for p in plans) if p]
+    if not plans:
+        return children, 0.0, [], "an den Dübelstellen ist zu wenig Material (Teil zu dünn)"
+    if len(plans) < planned:
+        why = f"{planned - len(plans)} von {planned} Dübeln wegen zu dünner Teile weggelassen"
     conns = []
     removed_total = 0.0
     kids = children
@@ -502,7 +551,9 @@ def _connect(first, spec, n, d, children, cfg, report_extra, groups=None, sides=
             "diameter_mm": round(plan["radius"] * 2, 2),
             "hole_diameter_mm": round(plan["radius"] * 2 + clearance, 2),
             "depth_mm": round(plan["depth"], 1),
-            "dowel_length_mm": round(2 * plan["depth"] - 1.5, 1),
+            "depth_below_mm": round(plan["depth_below"], 1),
+            "depth_above_mm": round(plan["depth_above"], 1),
+            "dowel_length_mm": round(plan["depth_below"] + plan["depth_above"] - 1.5, 1),
             "clearance_mm": clearance,
         }
         conn.update(report_extra)
@@ -691,14 +742,13 @@ def _punch(children, n, d, plan, clearance, sides=None):
     """Loch in beide Kinder (unter/ueber der Ebene) bohren; liefert (neue Kinder, entferntes Volumen)."""
     c = np.asarray(plan["center"])
     rh = plan["radius"] + clearance / 2.0
-    L = plan["depth"]
     out, removed = [], 0.0
     for ci, (comp, faces) in enumerate(children):
         side = sides[ci] if sides else _side_of(comp, n, d)
         if side == "below":       # Teil liegt unter der Ebene
-            cyl = _cylinder(c, n, L, 0.5, rh)
+            cyl = _cylinder(c, n, plan["depth_below"], 0.5, rh)
         elif side == "above":     # Teil liegt ueber der Ebene
-            cyl = _cylinder(c, n, 0.5, L, rh)
+            cyl = _cylinder(c, n, 0.5, plan["depth_above"], rh)
         else:
             out.append((comp, faces))
             continue
@@ -802,8 +852,8 @@ def split_mesh(path, params, progress=None):
             removed_total += rem
             if conns:
                 connectors.extend(conns)
-            elif why:
-                warnings.append(f"Schnitt {len(cuts)}: {why}, kein Duebel")
+            if why:
+                warnings.append(f"Schnitt {len(cuts)}: {why}" + ("" if conns else ", kein Duebel"))
             for item in kids:
                 work.append(item)
     else:
@@ -912,8 +962,8 @@ def split_mesh(path, params, progress=None):
                         removed_total += rem
                         if conns:
                             connectors.extend(conns)
-                        elif why:
-                            warnings.append(f"Schnitt {len(cuts)}: {why}, kein Duebel")
+                        if why:
+                            warnings.append(f"Schnitt {len(cuts)}: {why}" + ("" if conns else ", kein Duebel"))
                     new_done.extend(kids)
                 else:
                     new_done.append((M, faces))

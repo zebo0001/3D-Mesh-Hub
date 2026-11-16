@@ -785,6 +785,7 @@ export function setCutPlanes(planes, connectors = []) {
     m.userData.cutPlate = true;
     m.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), new THREE.Vector3(...c.normal).normalize());
     m.position.set(...c.center);
+    if (c.offset) m.position.addScaledVector(new THREE.Vector3(...c.normal).normalize(), c.offset); // Lochtiefen beidseits unterschiedlich
     m.renderOrder = 4;
     cutGroup.add(m);
   }

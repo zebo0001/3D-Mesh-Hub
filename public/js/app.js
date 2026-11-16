@@ -751,6 +751,7 @@ const startBtn = q('sp-start');
 if (!printerSel || !resultEl || !startBtn) return;
 const alive = () => document.body.contains(printerSel);
 const n1 = (v) => Number(v).toLocaleString(localeTag(), { maximumFractionDigits: 1 });
+const rng = (a) => { const lo = Math.min(...a), hi = Math.max(...a); return Math.abs(hi - lo) < 0.05 ? n1(lo) : n1(lo) + '–' + n1(hi); };
 
 // Letzte Eingaben nur als Komfort im Browser merken (kann leer sein oder fehlen)
 let saved = {};
@@ -809,7 +810,7 @@ const b = r.bed_usable_mm || [];
 return `<div class="mesh-result ${fits ? 'ok' : 'warn'}">${fits ? t('split.done', { n: r.part_count }) : t('split.doneNoFit', { n: r.part_count })}</div>
 <div class="hint">${t('split.facts', { scale: Number(r.scale).toLocaleString(localeTag(), { maximumFractionDigits: 3 }), w: n1(e[0]), h: n1(e[1]), d: n1(e[2]), bw: n1(b[0]), bd: n1(b[1]), bh: n1(b[2]) })}</div>
 ${r.manual ? `<div class="hint">${t('split.cutManual')}</div>` : ''}
-${(r.connectors || []).length ? `<div class="hint">${t('split.dowels', { n: r.connectors.length, d: n1(r.connectors[0].diameter_mm), h: n1(r.connectors[0].hole_diameter_mm), c: n1(r.connectors[0].clearance_mm), l: n1(r.connectors[0].dowel_length_mm), depth: n1(r.connectors[0].depth_mm) })}</div>` : ''}
+${(r.connectors || []).length ? `<div class="hint">${t('split.dowels', { n: r.connectors.length, d: rng(r.connectors.map((x) => x.diameter_mm)), c: n1(r.connectors[0].clearance_mm), l: rng(r.connectors.map((x) => x.dowel_length_mm)), depth: rng(r.connectors.flatMap((x) => [x.depth_below_mm ?? x.depth_mm, x.depth_above_mm ?? x.depth_mm])) })}</div>` : ''}
 <div class="hint">${t('split.up', { axis: String(r.up_axis || '').toUpperCase(), how: r.up_axis_auto ? t('split.upAuto') : t('split.upSet') })}</div>
 <div class="split-cuts" id="sp-cuts"></div>
 <table class="mesh-table"><tr><th>${t('split.colPart')}</th><th>${t('split.colSize')}</th><th>${t('split.colVol')}</th><th>${t('split.colFlat')}</th></tr>${rows}</table>
@@ -844,7 +845,7 @@ const reg = Array.isArray(c.region_mm) && c.region_mm.length === 6 ? c.region_mm
 return { ...base, axis: c.axis, pos: o[a] + c.position_mm / sc, region: reg, outline };
 });
 const conns = dirty ? [] : (lastReport.connectors || []).map((c) => ({
-center: toFile(c.center_mm), normal: c.normal, radius: (c.diameter_mm / 2) / sc, length: c.dowel_length_mm / sc,
+center: toFile(c.center_mm), normal: c.normal, radius: (c.diameter_mm / 2) / sc, length: c.dowel_length_mm / sc, offset: (((c.depth_above_mm ?? c.depth_mm) - (c.depth_below_mm ?? c.depth_mm)) / 2) / sc,
 }));
 setCutPlanes(planes, conns);
 };

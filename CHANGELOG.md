@@ -3,6 +3,13 @@
 Alle nennenswerten Aenderungen an 3D Mesh Hub werden hier dokumentiert.
 Das Projekt folgt [Semantic Versioning](https://semver.org/lang/de/) (MAJOR.MINOR.PATCH).
 
+## [1.16.0] - 2026-11-16
+
+### Geaendert
+- Duebel: Groesse und Tiefe richten sich nach dem tatsaechlichen Platz. Radius ca. 30 % des Randabstands der Schnittflaeche (2,5 bis 10 mm, grosse Teile bekommen also dickere Duebel), Zieltiefe 2 r + 3 mm. Eine Passpruefung am echten Netz stellt je Teil sicher, dass Loch plus Wand (3 mm seitlich, 2 mm hinter dem Lochgrund) ganz im Material liegt: zuerst wird die Tiefe je Teil verkuerzt (bis 6 mm), dann der Radius verkleinert (bis 2,5 mm). Wo kein Platz ist, entfaellt der Duebel mit Warnung. Vorher konnten Duebel an duennen Stellen (Peitschengriff, Zopfspitze) herausstehen oder ein offenes Loch bilden, weil die Tiefe aus der Bounding-Box des Ursprungsteils berechnet wurde.
+- Lochtiefe kann je Seite unterschiedlich sein; Duebellaenge = Tiefe unten + Tiefe oben - 1,5 mm. Im Viewer sitzt der gruene Duebel entsprechend versetzt. Der Hinweis im Ergebnis nennt Bereiche (Durchmesser, Tiefe, Laenge).
+- Schnittflaechen-Randabstand fuer Duebel mindestens 3 mm.
+
 ## [1.15.0] - 2026-11-15
 
 ### Hinzugefuegt

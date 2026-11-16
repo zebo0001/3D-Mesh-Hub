@@ -281,7 +281,19 @@ function register(app, { db, safeResolve }) {
   });
 
   // ---- Reparatur ----
-  app.post('/api/files/:id/repair', (req, res) => startJob('repair', req, res, null));
+  app.post('/api/files/:id/repair', json, (req, res) => {
+    // Optional: auf diese Dreieckszahl vereinfachen (leer = nur bei sehr grossen Dateien automatisch)
+    const raw = req.body && req.body.target_faces;
+    let params = null;
+    if (raw !== undefined && raw !== null && raw !== '') {
+      const n = Math.round(Number(raw));
+      if (!Number.isFinite(n) || n < 5000 || n > 20000000) {
+        return res.status(400).json({ ok: false, error: 'Ziel-Dreieckszahl muss zwischen 5.000 und 20.000.000 liegen' });
+      }
+      params = { target_faces: n };
+    }
+    return startJob('repair', req, res, params);
+  });
   app.get('/api/files/:id/repair', (req, res) => pollJob('repair', req, res));
   app.get('/api/files/:id/repaired', (req, res) => download('repair', req, res, '_repariert.stl'));
 

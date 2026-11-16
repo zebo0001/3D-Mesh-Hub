@@ -37,7 +37,13 @@ from fastapi.responses import FileResponse, JSONResponse
 SERVICE_NAME = "3d-mesh-hub-mesh-service"
 # Obergrenze fuer die Eingabe (Dreiecke). Schuetzt vor Speicherueberlauf; die
 # Testdatei mit 828 000 Dreiecken lief problemlos.
+# Darueber wird nicht abgelehnt, sondern automatisch vereinfacht (siehe AUTO_TARGET_FACES).
 MAX_FACES = int(os.environ.get("MAX_FACES", "5000000"))
+# Zielgroesse der automatischen Vereinfachung fuer zu grosse Dateien.
+AUTO_TARGET_FACES = int(os.environ.get("AUTO_TARGET_FACES", "1500000"))
+# Harte Obergrenze: noch groessere Dateien werden abgelehnt (Speicherschutz).
+HARD_MAX_FACES = int(os.environ.get("HARD_MAX_FACES", "20000000"))
+MIN_TARGET_FACES = 5000
 # Fertige Jobs werden nach dieser Zeit samt Ergebnisdatei geloescht.
 JOB_TTL_SECONDS = int(os.environ.get("JOB_TTL_SECONDS", "3600"))
 # Splitter: Komponenten mit weniger Dreiecken UND winziger Ausdehnung werden entfernt.
@@ -91,7 +97,7 @@ def _repair_one(component):
     return trimesh.Trimesh(np.asarray(fixer.points), np.asarray(fixer.faces), process=True)
 
 
-def repair_mesh(path, progress=None):
+def repair_mesh(path, progress=None, params=None):
     """Laedt, bereinigt und repariert. Gibt (reparierte Trimesh, Bericht) zurueck."""
     def say(msg):
         if progress:
@@ -101,10 +107,36 @@ def repair_mesh(path, progress=None):
     loaded = trimesh.load(path, force="mesh", process=True)
     if not isinstance(loaded, trimesh.Trimesh) or len(loaded.faces) == 0:
         raise ValueError("Die Datei enthaelt kein lesbares Dreiecksnetz")
-    if len(loaded.faces) > MAX_FACES:
-        raise ValueError(f"Zu viele Dreiecke ({len(loaded.faces)}), Limit {MAX_FACES}")
+    if len(loaded.faces) > HARD_MAX_FACES:
+        raise ValueError(f"Zu viele Dreiecke ({len(loaded.faces)}), absolutes Limit {HARD_MAX_FACES}")
 
     before = _describe(loaded)
+    warnings = []
+
+    # Optionale Vereinfachung (Quadric Decimation) vor der Reparatur.
+    faces_in = len(loaded.faces)
+    target = None
+    try:
+        if (params or {}).get("target_faces"):
+            target = max(MIN_TARGET_FACES, int(params["target_faces"]))
+    except (TypeError, ValueError):
+        target = None
+    auto = False
+    if target is None and faces_in > MAX_FACES:
+        target, auto = AUTO_TARGET_FACES, True
+    if target is not None and faces_in > target:
+        say(f"Vereinfache {faces_in:,} auf ca. {target:,} Dreiecke".replace(",", "."))
+        loaded = loaded.simplify_quadric_decimation(face_count=target)
+        loaded.process(validate=True)
+        if len(loaded.faces) == 0:
+            raise ValueError("Die Vereinfachung hat kein Netz uebrig gelassen")
+        warnings.append(
+            f"{'Automatisch ' if auto else ''}vereinfacht: {faces_in} -> {len(loaded.faces)} Dreiecke"
+            + (f" (Datei lag ueber {MAX_FACES})" if auto else "")
+            + ". Feine Details koennen leicht abgerundet sein."
+        )
+    simplified_from = faces_in if len(loaded.faces) < faces_in else None
+
     say("Analysiere Komponenten")
     components = _split_components(loaded)
     before["components"] = len(components)
@@ -135,7 +167,6 @@ def repair_mesh(path, progress=None):
     after = _describe(result)
     after["components"] = len(repaired_parts)
 
-    warnings = []
     if after["volume_mm3"] and before["volume_mm3"]:
         diff = abs(after["volume_mm3"] - before["volume_mm3"]) / max(abs(before["volume_mm3"]), 1.0)
         if diff > VOLUME_WARN_FRACTION:
@@ -147,6 +178,7 @@ def repair_mesh(path, progress=None):
         "before": before,
         "after": after,
         "removed_fragments": removed,
+        "simplified_from": simplified_from,
         "warnings": warnings,
         "ok_watertight": bool(after["watertight"]),
     }
@@ -172,7 +204,7 @@ def _child_main(src_path, out_path, progress_path, report_path, kind="repair", p
             with open(out_path, "wb") as fh:
                 fh.write(data)
         else:
-            mesh, report = repair_mesh(src_path, progress)
+            mesh, report = repair_mesh(src_path, progress, params)
             progress("Schreibe Ergebnis")
             mesh.export(out_path, file_type="stl")
         report["seconds"] = round(time.time() - started, 1)

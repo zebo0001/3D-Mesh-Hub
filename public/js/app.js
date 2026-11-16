@@ -1300,7 +1300,8 @@ html = reportHtml(st.report || {}, st.download_url);
 } else {
 const err = st.state === 'error' ? `<div class="mesh-warn">${escapeHtml(st.error || t('mesh.error'))}</div>` : '';
 html = `${err}<div class="hint">${t('mesh.intro')}</div>
-<div class="mesh-actions"><button type="button" class="btn-secondary" id="mesh-repair-btn">${t('mesh.repairBtn')}</button></div>`;
+<div class="mesh-actions"><button type="button" class="btn-secondary" id="mesh-repair-btn">${t('mesh.repairBtn')}</button></div>
+<label class="hint mesh-simplify">${t('mesh.simplifyLabel')} <input type="number" id="mesh-target-faces" min="5000" step="10000" placeholder="${t('mesh.simplifyPh')}" style="width:9em"></label>`;
 }
 body.innerHTML = html;
 const btn = document.getElementById('mesh-repair-btn');
@@ -1319,7 +1320,9 @@ if (st.state === 'queued' || st.state === 'running') timer = setTimeout(poll, 30
 const start = async () => {
 render({ state: 'queued', progress: t('mesh.uploading') });
 try {
-await api(`/api/files/${f.id}/repair`, { method: 'POST' });
+const tf = document.getElementById('mesh-target-faces');
+const target = tf && tf.value ? Number(tf.value) : null;
+await api(`/api/files/${f.id}/repair`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(target ? { target_faces: target } : {}) });
 } catch (e) {
 render({ state: 'error', error: e.message });
 return;

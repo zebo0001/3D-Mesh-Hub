@@ -3,6 +3,13 @@
 Alle nennenswerten Aenderungen an 3D Mesh Hub werden hier dokumentiert.
 Das Projekt folgt [Semantic Versioning](https://semver.org/lang/de/) (MAJOR.MINOR.PATCH).
 
+## [1.21.0] - 2026-11-17
+
+### Neu
+- Mesh-Reparatur: Dateien mit mehr als 5.000.000 Dreiecken werden nicht mehr abgelehnt, sondern automatisch auf ca. 1.500.000 Dreiecke vereinfacht (Quadric Decimation, `fast-simplification`) und dann repariert; der Bericht weist darauf hin. Optional kann man im Reparatur-Panel eine eigene Ziel-Dreieckszahl eingeben (5.000 bis 20.000.000). Das Original bleibt unveraendert.
+- Neue Umgebungsvariablen des Mesh-Dienstes: `AUTO_TARGET_FACES` (Standard 1500000) und `HARD_MAX_FACES` (Standard 20000000, darueber wird abgelehnt). `MAX_FACES` ist jetzt die Schwelle fuer die automatische Vereinfachung.
+- Der Mesh-Dienst-Container braucht die neue Abhaengigkeit: `docker compose -f docker-compose.mesh.yml up -d --build`.
+
 ## [1.20.0] - 2026-11-17
 
 ### Geaendert

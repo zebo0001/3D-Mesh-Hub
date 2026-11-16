@@ -124,8 +124,11 @@ function validateSplitParams(body) {
   if (x == null || y == null || z == null) return { error: 'Druckbett: Breite, Tiefe und Hoehe in mm angeben (50 bis 2000)' };
   const margin = b.margin_mm === undefined || b.margin_mm === '' ? 5 : num(b.margin_mm, 0, 100);
   if (margin == null) return { error: 'Rand: 0 bis 100 mm' };
-  const height = num(b.target_height_mm, 10, 10000);
-  if (height == null) return { error: 'Zielhoehe: 10 bis 10000 mm' };
+  const hasScale = b.scale !== undefined && b.scale !== null && b.scale !== '';
+  const scaleF = hasScale ? num(b.scale, 0.01, 1000) : null;
+  if (hasScale && scaleF == null) return { error: 'Massstab: Faktor 0,01 bis 1000' };
+  const height = hasScale ? null : num(b.target_height_mm, 10, 10000);
+  if (!hasScale && height == null) return { error: 'Zielhoehe: 10 bis 10000 mm' };
   const up = String(b.up_axis || 'auto').toLowerCase();
   if (!['auto', 'x', 'y', 'z'].includes(up)) return { error: 'Oben-Achse ungueltig' };
   const cn = b.connectors || {};
@@ -135,7 +138,9 @@ function validateSplitParams(body) {
   if (clearance == null || depth == null || diam == null) return { error: 'Duebel: Spiel 0 bis 2 mm, Tiefe 5 bis 60 mm, Durchmesser 3 bis 40 mm (0 = automatisch)' };
   const vc = validateCuts(b.cuts);
   if (vc.error) return { error: vc.error };
-  const params = { up_axis: up, up_flip: !!b.up_flip, target_height_mm: height, bed: { x, y, z }, margin_mm: margin };
+  const params = { up_axis: up, up_flip: !!b.up_flip, bed: { x, y, z }, margin_mm: margin };
+  if (hasScale) params.scale = scaleF; else params.target_height_mm = height;
+  if (b.max_scale_search) params.max_scale_search = true;
   params.connectors = { enabled: cn.enabled !== false, clearance_mm: clearance, depth_mm: depth, diameter_mm: diam };
   if (vc.cuts) params.cuts = vc.cuts;
   return { params };
@@ -304,6 +309,25 @@ function register(app, { db, safeResolve }) {
       res.send(entry.getData());
     } catch (e) {
       res.status(500).json({ error: 'Vorschau konnte nicht gelesen werden' });
+    }
+  });
+  // Einzelnes Teil in Druckausrichtung (die STL aus der ZIP): fuer die Bettansicht
+  app.get('/api/files/:id/split/part/:n', (req, res) => {
+    const row = getFileRow(req.params.id);
+    if (!row) return res.status(404).end();
+    const n = Number(req.params.n);
+    if (!Number.isInteger(n) || n < 1 || n > 999) return res.status(400).end();
+    const { file } = resultPaths('split', row.id);
+    if (!fs.existsSync(file)) return res.status(404).json({ error: 'Kein Ergebnis vorhanden' });
+    try {
+      const AdmZip = require('adm-zip');
+      const entry = new AdmZip(file).getEntry(`Teil-${String(n).padStart(2, '0')}.stl`);
+      if (!entry) return res.status(404).json({ error: 'Teil nicht gefunden' });
+      res.set('Content-Type', 'model/stl');
+      res.set('Cache-Control', 'no-store');
+      res.send(entry.getData());
+    } catch (e) {
+      res.status(500).json({ error: 'Teil konnte nicht gelesen werden' });
     }
   });
   app.get('/api/files/:id/split/download', (req, res) => download('split', req, res, '_teile.zip'));

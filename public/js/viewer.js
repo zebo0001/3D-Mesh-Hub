@@ -806,6 +806,79 @@ export function fitCamera() {
   controls.update();
 }
 
+
+// ---------------- Bettansicht: ein Teil in Druckausrichtung auf dem Druckbett ----------------
+// Eigene Szene in mm (Bett-X nach rechts, Bett-Y nach hinten, Z nach oben); Original und Teile werden ausgeblendet.
+let bedViewGroup = null;
+let bedViewSaved = null;
+
+function disposeGroup(g) {
+  if (!g) return;
+  g.traverse((c) => { if (c.geometry) c.geometry.dispose(); if (c.material) c.material.dispose(); });
+  if (g.parent) g.parent.remove(g);
+}
+
+export function hideBedPart() {
+  if (!bedViewGroup) return;
+  disposeGroup(bedViewGroup);
+  bedViewGroup = null;
+  if (bedViewSaved && camera && controls) {
+    camera.near = bedViewSaved.near; camera.far = bedViewSaved.far; camera.updateProjectionMatrix();
+    controls.target.copy(bedViewSaved.target); camera.position.copy(bedViewSaved.pos); controls.update();
+  }
+  bedViewSaved = null;
+  if (partsGroup) { partsGroup.visible = true; } else { for (const m of meshList()) setMatVisible(m, true); }
+  if (cutGroup) cutGroup.visible = true;
+}
+
+// bed: {x, y, z} in mm, margin: mm. Gibt Abmessungen und Passung zurueck, oder null bei Ladefehler.
+export async function showBedPart({ url, bed, margin, color }) {
+  ensureScene();
+  const geo = await new Promise((resolve) => new STLLoader().load(url, resolve, undefined, () => resolve(null)));
+  if (!geo || !scene || !currentMesh) return null;
+  const first = !bedViewGroup;
+  if (bedViewGroup) { disposeGroup(bedViewGroup); bedViewGroup = null; }
+  if (first) bedViewSaved = { near: camera.near, far: camera.far, target: controls.target.clone(), pos: camera.position.clone() };
+  geo.computeBoundingBox();
+  const bb = geo.boundingBox;
+  const ex = bb.max.x - bb.min.x, ey = bb.max.y - bb.min.y, ez = bb.max.z - bb.min.z;
+  geo.translate(-bb.min.x, -bb.min.y, -bb.min.z);
+  geo.computeVertexNormals();
+  const g = new THREE.Group();
+  const bw = bed.x, bd = bed.y;
+  const plane = new THREE.Mesh(new THREE.PlaneGeometry(bw, bd), new THREE.MeshBasicMaterial({ color: 0x1a2030, transparent: true, opacity: 0.8, side: THREE.DoubleSide, depthWrite: false }));
+  plane.rotation.x = -Math.PI / 2;
+  plane.position.y = -0.3;
+  g.add(plane);
+  const pts = [];
+  for (let x = -bw / 2; x <= bw / 2 + 1e-6; x += 10) pts.push(x, 0, -bd / 2, x, 0, bd / 2);
+  for (let z = -bd / 2; z <= bd / 2 + 1e-6; z += 10) pts.push(-bw / 2, 0, z, bw / 2, 0, z);
+  const gg = new THREE.BufferGeometry();
+  gg.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
+  g.add(new THREE.LineSegments(gg, new THREE.LineBasicMaterial({ color: 0x35456b, transparent: true, opacity: 0.6 })));
+  const rect = (w, d, col) => new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints([
+    new THREE.Vector3(-w / 2, 0.1, -d / 2), new THREE.Vector3(w / 2, 0.1, -d / 2), new THREE.Vector3(w / 2, 0.1, d / 2), new THREE.Vector3(-w / 2, 0.1, d / 2),
+  ]), new THREE.LineBasicMaterial({ color: col }));
+  g.add(rect(bw, bd, 0x5b8ef5));
+  const ux = bw - 2 * margin, uy = bd - 2 * margin;
+  const fits = ex <= ux + 1e-6 && ey <= uy + 1e-6 && ez <= bed.z - 2 * margin + 1e-6;
+  g.add(rect(ux, uy, fits ? 0x4ade80 : 0xf87171));
+  const mesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color: color || 0xe07a2f, metalness: 0.05, roughness: 0.65 }));
+  mesh.rotation.x = -Math.PI / 2;
+  mesh.position.set(-ex / 2, 0, ey / 2);
+  g.add(mesh);
+  scene.add(g);
+  bedViewGroup = g;
+  if (partsGroup) partsGroup.visible = false; else for (const m of meshList()) setMatVisible(m, false);
+  if (cutGroup) cutGroup.visible = false;
+  const dist = Math.max(bw, bd) * 1.7;
+  camera.near = 1; camera.far = dist * 40; camera.updateProjectionMatrix();
+  controls.target.set(0, Math.min(ez, bed.z) / 3, 0);
+  camera.position.set(dist * 0.55, dist * 0.8, dist * 0.85);
+  controls.update();
+  return { ex, ey, ez, ux, uy, uz: bed.z - 2 * margin, fits };
+}
+
 // ---------------- Teile in Einbaulage / Explosionsansicht ----------------
 // parts: [{ url, bounds_mm (skalierte Koordinaten), color }], origin/scale aus dem Planer-Bericht
 let partsGroup = null;

@@ -1,4 +1,4 @@
-import { loadIntoViewer, setUnitScale, setMeasureMode, clearMeasure, setSection, setShading, setModelColor, setView, setBed, BED_PRESETS, setCutPlanes, clearCutPlanes, setCutPickMode, fitCamera, showParts, hideParts, setExplode, highlightPart } from './viewer.js';
+import { loadIntoViewer, setUnitScale, setMeasureMode, clearMeasure, setSection, setShading, setModelColor, setView, setBed, BED_PRESETS, setCutPlanes, clearCutPlanes, setCutPickMode, fitCamera, showParts, hideParts, setExplode, highlightPart, showBedPart, hideBedPart } from './viewer.js';
 import { t, getLang, setLang, applyStaticTranslations, localeTag, sortLocale } from './i18n.js';
 
 const gridEl = document.getElementById('grid');
@@ -731,6 +731,8 @@ return `<div class="split-box"><h4 class="mesh-sub">${t('split.title')}</h4>
 </span>
 <label>${t('split.margin')}<input type="number" id="sp-margin" min="0" max="100" step="1" value="5"></label>
 <label>${t('split.height')}<input type="number" id="sp-height" min="10" max="10000" step="10" value="1400"></label>
+<label>${t('split.scale')}<input type="number" id="sp-scale" min="0.01" max="1000" step="0.05" placeholder="${t('split.scaleAuto')}"></label>
+<label class="vt-check" title="${t('split.maxScaleTitle')}"><input type="checkbox" id="sp-maxscale"> ${t('split.maxScale')}</label>
 <label class="vt-check"><input type="checkbox" id="sp-flip"> ${t('split.flip')}</label>
 </div>
 <div class="split-form">
@@ -757,10 +759,11 @@ const rng = (a) => { const lo = Math.min(...a), hi = Math.max(...a); return Math
 let saved = {};
 try { saved = JSON.parse(localStorage.getItem('meshSplit') || '{}') || {}; } catch { saved = {}; }
 printerSel.value = [...printerSel.options].some((o) => o.value === saved.printer) ? saved.printer : 'kobra_3_max';
-for (const [id, key] of [['sp-bx', 'bx'], ['sp-by', 'by'], ['sp-bz', 'bz'], ['sp-margin', 'margin'], ['sp-height', 'height']]) {
+for (const [id, key] of [['sp-bx', 'bx'], ['sp-by', 'by'], ['sp-bz', 'bz'], ['sp-margin', 'margin'], ['sp-height', 'height'], ['sp-scale', 'scale']]) {
 if (saved[key] != null && saved[key] !== '') q(id).value = saved[key];
 }
 q('sp-flip').checked = !!saved.flip;
+q('sp-maxscale').checked = !!saved.maxscale;
 if (saved.dw != null) q('sp-dw').checked = !!saved.dw;
 for (const [id, key] of [['sp-dw-d', 'dwd'], ['sp-dw-depth', 'dwdepth'], ['sp-dw-clear', 'dwclear']]) {
 if (saved[key] != null && saved[key] !== '') q(id).value = saved[key];
@@ -783,23 +786,34 @@ bed = { x: Number(q('sp-bx').value), y: Number(q('sp-by').value), z: Number(q('s
 const p = BED_PRESETS.find((b) => b.id === printerSel.value);
 bed = { x: p.x, y: p.z, z: p.h }; // Profil: x = Breite, z = Tiefe, h = Hoehe
 }
-return {
+const out = {
 bed,
 margin_mm: q('sp-margin').value === '' ? 5 : Number(q('sp-margin').value),
-target_height_mm: Number(q('sp-height').value),
 up_flip: q('sp-flip').checked,
 };
+if (q('sp-scale').value !== '') out.scale = Number(q('sp-scale').value); else out.target_height_mm = Number(q('sp-height').value);
+if (q('sp-maxscale').checked) out.max_scale_search = true;
+return out;
 };
 const remember = () => {
 try {
 localStorage.setItem('meshSplit', JSON.stringify({
 printer: printerSel.value, bx: q('sp-bx').value, by: q('sp-by').value, bz: q('sp-bz').value,
-margin: q('sp-margin').value, height: q('sp-height').value, flip: q('sp-flip').checked,
+margin: q('sp-margin').value, height: q('sp-height').value, scale: q('sp-scale').value, maxscale: q('sp-maxscale').checked, flip: q('sp-flip').checked,
 dw: q('sp-dw').checked, dwd: q('sp-dw-d').value, dwdepth: q('sp-dw-depth').value, dwclear: q('sp-dw-clear').value,
 }));
 } catch { /* Speicher gesperrt: egal */ }
 };
 
+const scalePicks = (r) => {
+const sc = Number(r.scale);
+if (!(sc > 0)) return '';
+const set = new Set();
+for (const step of [0.05, 0.1, 0.5]) { const v = Math.floor(sc / step + 1e-9) * step; if (v > 0 && v < sc - 1e-4) set.add(Number(v.toFixed(2))); }
+const hs = Number(r.model_height_mm) > 0 ? (v) => ` (${Math.round(v * Number(r.model_height_mm))} mm)` : () => '';
+const btns = [...set].sort((a, b) => b - a).map((v) => `<button type="button" class="cut-btn scale-pick" data-scale="${v}">×${v.toLocaleString(localeTag())}${hs(v)}</button>`).join(' ');
+return btns ? ` <span class="scale-picks">${t('split.scaleRound')} ${btns}</span>` : '';
+};
 const reportHtml = (r, url) => {
 const checks = r.checks || {};
 lastDownloadUrl = url || lastDownloadUrl;
@@ -810,6 +824,7 @@ const e = r.scaled_extents_mm || [];
 const b = r.bed_usable_mm || [];
 return `<div class="mesh-result ${fits ? 'ok' : 'warn'}">${fits ? t('split.done', { n: r.part_count }) : t('split.doneNoFit', { n: r.part_count })}</div>
 <div class="hint">${t('split.facts', { scale: Number(r.scale).toLocaleString(localeTag(), { maximumFractionDigits: 3 }), w: n1(e[0]), h: n1(e[1]), d: n1(e[2]), bw: n1(b[0]), bd: n1(b[1]), bh: n1(b[2]) })}</div>
+<div class="scale-line"><b>${t('split.scaleLine', { s: Number(r.scale).toLocaleString(localeTag(), { maximumFractionDigits: 4 }), m: n1(r.model_height_mm), h: n1(Number(r.model_height_mm) * Number(r.scale)) })}</b>${scalePicks(r)}</div>
 ${r.manual ? `<div class="hint">${t('split.cutManual')}</div>` : ''}
 ${(r.connectors || []).length ? `<div class="hint">${t('split.dowels', { n: r.connectors.length, d: rng(r.connectors.map((x) => x.diameter_mm)), c: n1(r.connectors[0].clearance_mm), l: rng(r.connectors.map((x) => x.dowel_length_mm)), depth: rng(r.connectors.flatMap((x) => [x.depth_below_mm ?? x.depth_mm, x.depth_above_mm ?? x.depth_mm])) })}</div>` : ''}
 <div class="hint">${t('split.up', { axis: String(r.up_axis || '').toUpperCase(), how: r.up_axis_auto ? t('split.upAuto') : t('split.upSet') })}</div>
@@ -854,8 +869,25 @@ setCutPlanes(planes, conns);
 const PART_COLORS = ['#e6194b', '#3cb44b', '#4363d8', '#f58231', '#911eb4', '#2bb5b5', '#f032e6', '#bcbd22', '#9a6324', '#800000', '#808000', '#000075', '#e6beff', '#aaffc3'];
 let partsView = false;
 let explode = 0.3;
-const leaveParts = () => { if (partsView) { partsView = false; hideParts(); } };
+let bedView = false;
+let bedIdx = 0;
+let bedInfo = '';
+const leaveBed = () => { if (bedView) { bedView = false; hideBedPart(); } };
+const leaveParts = () => { leaveBed(); if (partsView) { partsView = false; hideParts(); } };
+const showBed = async () => {
+if (!lastReport || !Array.isArray(lastReport.parts) || !lastReport.parts.length) return;
+if (partsView) { partsView = false; hideParts(); }
+const n = lastReport.parts.length;
+bedIdx = ((bedIdx % n) + n) % n;
+const inp = readInput();
+const r = await showBedPart({ url: `/api/files/${f.id}/split/part/${bedIdx + 1}`, bed: inp.bed, margin: inp.margin_mm, color: PART_COLORS[bedIdx % PART_COLORS.length] });
+if (!r) { bedView = false; setCutStatus(t('split.partsFail'), true); renderCuts(); return; }
+bedView = true;
+bedInfo = t(r.fits ? 'split.bedFits' : 'split.bedNoFit', { n: lastReport.parts[bedIdx].name, w: n1(r.ex), d: n1(r.ey), h: n1(r.ez), uw: n1(r.ux), ud: n1(r.uy), uh: n1(r.uz), rw: n1(r.ux - r.ex), rd: n1(r.uy - r.ey), m: n1(inp.margin_mm) });
+renderCuts();
+};
 const startParts = async () => {
+leaveBed();
 if (!lastReport || !Array.isArray(lastReport.parts)) return;
 if (!Array.isArray(lastReport.origin_mm) || !(Number(lastReport.scale) > 0)) { setCutStatus(t('split.partsFail'), true); return; }
 partsView = true;
@@ -899,6 +931,9 @@ box.innerHTML = `<h4 class="mesh-sub">${t('split.cutsTitle')}</h4>
 <div class="cut-parts"><div class="cut-parts-head"><button type="button" class="cut-btn" data-act="parts">${partsView ? t('split.partsHide') : t('split.partsShow')}</button>
 <label class="cut-explode" ${partsView ? '' : 'hidden'}>${t('split.explode')} <input type="range" id="sp-explode" min="0" max="1" step="0.01" value="${explode}"></label></div>
 <table class="mesh-table cut-parts-table"><tr><th>${t('split.colPart')}</th><th>${t('split.colSize')}</th><th>${t('split.colVol')}</th></tr>${(lastReport.parts || []).map((p, i) => `<tr data-part="${i}"><td><span class="part-sw" style="background:${PART_COLORS[i % PART_COLORS.length]}"></span>${escapeHtml(p.name)}${p.tiny ? ' ⚠' : ''}</td><td class="${p.fits === false ? 'nofit' : ''}">${p.extents_mm.map(n1).join(' × ')}</td><td>${n1(p.volume_cm3)}</td></tr>`).join('')}</table></div>
+<div class="bedview"><button type="button" class="cut-btn" data-act="bed">${bedView ? t('split.bedHide') : t('split.bedShow')}</button>
+<span ${bedView ? '' : 'hidden'}><button type="button" class="cut-btn" data-act="bedprev">◀</button> ${escapeHtml(((lastReport.parts || [])[bedIdx] || {}).name || '')} <button type="button" class="cut-btn" data-act="bednext">▶</button></span>
+<div class="hint">${bedView ? escapeHtml(bedInfo) : t('split.bedHint')}</div></div>
 <div class="mesh-actions"><button type="button" class="btn-secondary" id="sp-recalc">${t('split.cutRecalc')}</button>
 <button type="button" class="btn-secondary" id="sp-reset">${t('split.cutReset')}</button>
 ${lastDownloadUrl ? `<a class="btn-secondary" id="sp-ed-download" href="${lastDownloadUrl}" download>${t('split.download')}</a>` : ''}</div>`;
@@ -1039,9 +1074,10 @@ if (ev.key === 'Escape' && pickBanner && alive()) { ev.stopImmediatePropagation(
 }, true);
 const recompute = async (withCuts) => {
 const input = readInput();
-const nums = [input.bed.x, input.bed.y, input.bed.z, input.margin_mm, input.target_height_mm];
+const nums = [input.bed.x, input.bed.y, input.bed.z, input.margin_mm, input.scale ?? input.target_height_mm];
 if (nums.some((v) => !Number.isFinite(v))) { render({ state: 'error', error: t('split.badNumbers') }); return; }
 if (withCuts) {
+delete input.max_scale_search;
 if (cutsEdit.some((c) => !Number.isFinite(Number(c.position_mm)))) { render({ state: 'error', error: t('split.badNumbers') }); return; }
 input.cuts = cutsEdit.map((c) => {
 const o = { axis: c.axis, position_mm: Number(c.position_mm) };
@@ -1065,12 +1101,23 @@ return;
 poll();
 };
 document.addEventListener('click', (ev) => {
+if (!alive() || !ev.target.closest) return;
+const sb = ev.target.closest('.scale-pick');
+if (!sb) return;
+q('sp-scale').value = sb.dataset.scale;
+q('sp-maxscale').checked = false;
+if (editorOpen) closeEditor();
+recompute(false);
+});
+document.addEventListener('click', (ev) => {
 if (!alive() || !ev.target.closest || !ev.target.closest('#sp-cuts')) return;
 const b = ev.target.closest('button');
 if (!b || !cutsEdit) return;
 const i = rowIndex(b);
 if (b.dataset.act === 'minus' && i >= 0) nudge(i, -5);
 else if (b.dataset.act === 'plus' && i >= 0) nudge(i, 5);
+else if (b.dataset.act === 'bed') { if (bedView) { leaveBed(); renderCuts(); } else if (dirty) setCutStatus(t('split.bedDirty'), true); else showBed(); }
+else if (b.dataset.act === 'bedprev' || b.dataset.act === 'bednext') { bedIdx += b.dataset.act === 'bednext' ? 1 : -1; showBed(); }
 else if (b.dataset.act === 'parts') { if (partsView) { leaveParts(); renderCuts(); drawPlates(); } else startParts(); }
 else if (b.dataset.act === 'remove' && i >= 0) { leaveParts(); cutsEdit.splice(i, 1); activeCut = -1; dirty = true; renderCuts(); drawPlates(); }
 else if (b.id === 'sp-add') {
@@ -1134,6 +1181,7 @@ dirty = false;
 activeCut = -1;
 resultEl.innerHTML = reportHtml(lastReport, st.download_url);
 renderCuts();
+leaveBed();
 if (partsView) { partsView = false; hideParts(); }
 if (editorOpen) {
 const side = document.querySelector('.cut-side');

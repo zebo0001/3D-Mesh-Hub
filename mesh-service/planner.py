@@ -111,27 +111,33 @@ def _support_score(oriented):
     return sup - 2.0 * contact + 4.0 * max(0.0, height - 300.0)
 
 
-def _spin_fit(oriented, bed):
-    """Passt der Grundriss (Projektion auf das Bett) bei Drehung um die Hochachse aufs Bett? Liefert (passt, Winkel in Grad).
-
-    Gesucht wird der Winkel mit der kleinsten Ueberschreitung; 0 Grad wird bevorzugt, wenn es passt."""
+def _hull_xy(oriented):
     from scipy.spatial import ConvexHull
     xy = oriented.vertices[:, :2]
     try:
-        H = xy[ConvexHull(xy).vertices]
+        return xy[ConvexHull(xy).vertices]
     except Exception:
-        H = xy
+        return xy
+
+
+def _hull_over(H, bed):
+    """Kleinste Ueberschreitung des Betts (mm) bei Drehung des Grundrisses H; (Ueberschreitung, Winkel). 0 Grad bevorzugt."""
     best = (float("inf"), 0.0)
     for deg in [0.0] + [float(a) for a in range(2, 180, 2)]:
         c, s_ = math.cos(math.radians(deg)), math.sin(math.radians(deg))
         R = H @ np.array([[c, -s_], [s_, c]])
-        w, d = np.ptp(R[:, 0]), np.ptp(R[:, 1])
-        over = max(w - bed[0], d - bed[1], 0.0)
+        over = max(np.ptp(R[:, 0]) - bed[0], np.ptp(R[:, 1]) - bed[1], 0.0)
         if over < best[0] - 1e-9:
             best = (over, deg)
         if over <= 1e-6 and deg == 0.0:
             break
-    return best[0] <= 1e-6, best[1], best[0]
+    return best
+
+
+def _spin_fit(oriented, bed):
+    """Passt der Grundriss (Projektion auf das Bett) bei Drehung um die Hochachse aufs Bett? Liefert (passt, Winkel, Ueberschreitung)."""
+    over, deg = _hull_over(_hull_xy(oriented), bed)
+    return over <= 1e-6, deg, over
 
 
 def _spin(mesh, deg):
@@ -916,6 +922,52 @@ def split_mesh(path, params, progress=None):
     if not (scale > 0):
         raise PlanError("Ungueltiger Massstab")
 
+    search_note = None
+    if params.get("max_scale_search") and not params.get("_inner") and not params.get("cuts"):
+        base = dict(params, max_scale_search=False, _inner=True, connectors=dict(params.get("connectors") or {}, enabled=False))
+        base.pop("target_height_mm", None)
+
+        def run(sc):
+            try:
+                return split_mesh(path, dict(base, scale=sc))[1]
+            except PlanError:
+                return None
+
+        def good(r, n):
+            return r is not None and r["checks"]["all_parts_fit"] and r["part_count"] <= n
+
+        say("Suche groessten Massstab (Probelauf 1)")
+        r0 = run(scale)
+        if r0 is None or not r0["checks"]["all_parts_fit"]:
+            search_note = "Maximalen Massstab suchen: schon der gewaehlte Massstab passt nicht, es wurde nicht gesucht"
+        else:
+            n0, ok, bad, probe = r0["part_count"], scale, None, 1
+            cur = scale
+            while bad is None and cur < scale * 1.6:
+                cur *= 1.03
+                probe += 1
+                say(f"Suche groessten Massstab (Probelauf {probe}, x{cur:.2f})")
+                if good(run(cur), n0):
+                    ok = cur
+                else:
+                    bad = cur
+            for _ in range(4 if bad else 0):
+                mid = (ok + bad) / 2.0
+                probe += 1
+                say(f"Suche groessten Massstab (Probelauf {probe}, x{mid:.2f})")
+                if good(run(mid), n0):
+                    ok = mid
+                else:
+                    bad = mid
+            final = math.floor(ok * 20 + 1e-9) / 20.0
+            if final != ok:
+                probe += 1
+                say(f"Suche groessten Massstab (Probelauf {probe}, x{final:.2f})")
+                if not good(run(final), n0):
+                    final = ok
+            scale = final
+            search_note = f"Groesster Massstab mit {n0} Teilen (gerundet auf 0,05): x{final:.2f}, Hoehe {final * float(ext0[up]):.0f} mm"
+
     bed_in = params.get("bed") or {}
     margin = float(params.get("margin_mm", 5))
     bed = [float(bed_in.get(k, 0)) - 2 * margin for k in ("x", "y", "z")]
@@ -931,6 +983,8 @@ def split_mesh(path, params, progress=None):
     ext_scaled = [float(x) for x in loaded.extents]
 
     warnings = []
+    if search_note:
+        warnings.append(search_note)
     cfg = {"enabled": True, "clearance_mm": 0.3, "depth_mm": 15.0, "diameter_mm": 0.0}
     cfg.update({k: v for k, v in (params.get("connectors") or {}).items() if k in cfg})
     connectors = []
@@ -1126,6 +1180,7 @@ def split_mesh(path, params, progress=None):
         })
     parts.sort(key=lambda d: d["sort"])
 
+
     zbuf = io.BytesIO()
     part_reports = []
     with zipfile.ZipFile(zbuf, "w", zipfile.ZIP_DEFLATED) as zf:
@@ -1171,6 +1226,7 @@ def split_mesh(path, params, progress=None):
         no_flat = sum(1 for r in part_reports if not r["flat_cut_face_down"])
         report = {
             "scale": round(scale, 5),
+            "model_height_mm": round(float(ext0[up]), 2),
             "origin_mm": [round(float(x), 4) for x in origin],
             "manual": manual is not None,
             "up_axis": AXIS_NAMES[up],

@@ -584,3 +584,8 @@ body.cut-editor-open { overflow: hidden; }
 .cut-bed select, .cut-bed input { font: inherit; }
 .cut-bed-custom input { width: 4.2rem; }
 .cut-bed-custom[hidden] { display: none; }
+.scale-line { margin: 0.4rem 0; }
+.scale-picks { display: inline-flex; gap: 0.35rem; align-items: center; flex-wrap: wrap; margin-left: 0.5rem; font-size: 0.85rem; color: var(--muted); }
+.bedview { margin: 0.6rem 0; display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; }
+.bedview .hint { flex-basis: 100%; margin: 0; }
+.bedview span[hidden] { display: none; }

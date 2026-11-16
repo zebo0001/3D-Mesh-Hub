@@ -3,6 +3,13 @@
 Alle nennenswerten Aenderungen an 3D Mesh Hub werden hier dokumentiert.
 Das Projekt folgt [Semantic Versioning](https://semver.org/lang/de/) (MAJOR.MINOR.PATCH).
 
+## [1.19.0] - 2026-11-16
+
+### Neu
+- Bettansicht (Vorschau) im Schnitteditor: zeigt ein Teil in Druckausrichtung auf dem Druckbett des gewaehlten Druckers, mit Rand-Rechteck (gruen = passt, rot = passt nicht) und Reserve in mm; mit Pfeilen durch die Teile blaettern. Nur fuer den berechneten Stand (nach Aenderungen erst neu berechnen). Neuer Endpunkt `GET /api/files/:id/split/part/:n`.
+- Maßstab als Faktor eingebbar (leer = nach Zielhoehe). Die Maßstabzeile steht jetzt gut sichtbar ueber dem Ergebnis ("Maßstab x4,6667, Modell 300 mm -> 1.400 mm"), mit Buttons fuer rundere Werte (x4,65 / x4,6 / x4,5) zum direkten Neuteilen. Damit laesst sich z. B. der Sockel mit exakt demselben Faktor skalieren und teilen.
+- "Groessten Maßstab suchen": probiert groessere Maßstaebe aus, solange die Teilezahl gleich bleibt und alles aufs Bett passt, und rundet auf 0,05 ab (dauert ca. 1-2 Minuten, nicht mit eigenen Schnitten). Beispiel Testmodell: 1.400 mm -> x4,85 (1.455 mm) bei gleichen 6 Teilen.
+
 ## [1.18.1] - 2026-11-16
 
 ### Geaendert

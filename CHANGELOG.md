@@ -3,6 +3,12 @@
 Alle nennenswerten Aenderungen an 3D Mesh Hub werden hier dokumentiert.
 Das Projekt folgt [Semantic Versioning](https://semver.org/lang/de/) (MAJOR.MINOR.PATCH).
 
+## [1.17.0] - 2026-11-16
+
+### Geaendert
+- Lizenz: das gesamte Projekt (auch `mesh-service/`) steht jetzt unter GNU AGPL-3.0 oder spaeter, mit Namensnennung als Zusatzbedingung nach Abschnitt 7(b) (`NOTICE`). Grund: `pymeshfix` (GPL-3.0) im Mesh-Dienst; so ist alles unter einer freien Lizenz veroeffentlichbar. Ersetzt die Zweiteilung aus 1.16.1. Fusszeile: "(c) 2026 Zebo0001 - AGPL-3.0".
+- Schnittebenen, Umrisse und Duebel erscheinen nur noch im Schnitteditor, nicht mehr in der normalen Ansicht; beim Schliessen des Editors verschwinden sie (ebenso die Explosionsansicht und ein laufendes Linienzeichnen).
+
 ## [1.16.1] - 2026-11-16
 
 ### Geaendert

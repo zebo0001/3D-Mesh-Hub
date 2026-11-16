@@ -1,6 +1,5 @@
-# SPDX-License-Identifier: GPL-3.0-only
-# Copyright (c) 2026 Zebo0001. Dieser Ordner (mesh-service/) steht unter GPL-3.0 (siehe LICENSE), weil er pymeshfix (GPL-3.0) nutzt.
-# The mesh-service/ folder is GPL-3.0 licensed (see LICENSE) because it uses pymeshfix (GPL-3.0).
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (c) 2026 Zebo0001 (siehe LICENSE und NOTICE; nutzt pymeshfix, GPL-3.0)
 """3D Mesh Hub - Mesh-Dienst (Stufe 1: Reparatur).
 
 Interner Helfer-Container, nur ueber docker-compose.mesh.yml aktiviert und

@@ -827,7 +827,7 @@ let activeCut = -1;
 let dirty = false; // Liste wurde seit der letzten Berechnung geaendert: Umrisse und Duebel sind veraltet
 const dot3 = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
 const drawPlates = () => {
-if (!lastReport || !cutsEdit) { clearCutPlanes(); return; }
+if (!lastReport || !cutsEdit || !editorOpen) { clearCutPlanes(); return; } // Schnittebenen nur im Schnitteditor
 const o = lastReport.origin_mm;
 const sc = Number(lastReport.scale);
 if (!Array.isArray(o) || !(sc > 0)) return;
@@ -966,11 +966,15 @@ shell.appendChild(side);
 document.body.classList.add('cut-editor-open');
 pokeResize();
 setTimeout(() => fitCamera(), 120);
+drawPlates();
 };
 const closeEditor = () => {
 const shell = shellEl();
 if (!editorOpen) return;
 editorOpen = false;
+leaveParts();
+endPick();
+drawPlates();
 const side = shell && shell.querySelector('.cut-side');
 const cuts = document.getElementById('sp-cuts');
 if (cuts && cutsHome && cutsHome.parent && document.body.contains(cutsHome.parent)) cutsHome.parent.insertBefore(cuts, cutsHome.next && cutsHome.next.parentNode === cutsHome.parent ? cutsHome.next : null);

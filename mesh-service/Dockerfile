@@ -9,8 +9,8 @@ WORKDIR /app
 COPY requirements.txt ./
 RUN pip install -r requirements.txt
 COPY LICENSE app.py planner.py ./
-LABEL org.opencontainers.image.licenses="GPL-3.0-only" \
-      org.opencontainers.image.description="3D Mesh Hub Mesh-Dienst (nutzt pymeshfix, GPL-3.0). Quellcode: Ordner mesh-service/ im Projekt-Repository."
+LABEL org.opencontainers.image.licenses="AGPL-3.0-or-later" \
+      org.opencontainers.image.description="3D Mesh Hub Mesh-Dienst (AGPL-3.0-or-later; nutzt pymeshfix, GPL-3.0). Quellcode: Ordner mesh-service/ im Projekt-Repository."
 
 ENV PORT=4002
 EXPOSE 4002

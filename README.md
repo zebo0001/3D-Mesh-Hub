@@ -272,23 +272,21 @@ Speichern ignoriert.
 
 ## Lizenz und Namensnennung
 
-Zweigeteilt, Copyright (c) 2026 Zebo0001:
+**GNU AGPL-3.0 oder später**, Copyright (c) 2026 Zebo0001 (siehe `LICENSE` und `NOTICE`). Das ganze Projekt steht unter
+einer Lizenz, auch der Mesh-Dienst. Frei nutzbar, veränderbar und weitergebbar, auch kommerziell, mit diesen
+Bedingungen:
 
-- **Hub (Server, Oberfläche, alles außer `mesh-service/`): MIT-Lizenz** (siehe `LICENSE`). Frei nutzbar, auch für eigene
-  Abwandlungen und kommerziell. Bedingung: Der Copyright-Hinweis samt Lizenztext bleibt in Kopien und wesentlichen Teilen
-  erhalten. Wer das Projekt weitergibt oder darauf aufbaut, nennt bitte „3D Mesh Hub von Zebo0001“ (README, Info-Seite
-  oder Quellcode). Eine sichtbare Nennung im laufenden Programm lässt sich mit einer freien Lizenz nicht erzwingen und ist
-  eine Bitte.
-- **Mesh-Dienst (`mesh-service/`): GPL-3.0** (siehe `mesh-service/LICENSE`), weil er die Bibliothek `pymeshfix`
-  (GPL-3.0) nutzt. Der Hub spricht ihn nur per HTTP an und ist ein eigenständiges Programm. Wer den Mesh-Dienst oder ein
-  Docker-Image davon weitergibt, muss ihn unter GPL-3.0 weitergeben und den Quellcode (diesen Ordner) mitliefern oder
-  anbieten. Das Copyright von Zebo0001 bleibt auch dort zu nennen. Für die private Nutzung im eigenen Homelab gibt es
-  keine Pflichten.
+- **Frei bleiben:** Wer das Projekt ändert und weitergibt (auch als Docker-Image) oder als Dienst über ein Netzwerk für
+  andere betreibt, muss den Quellcode seiner Version unter derselben Lizenz zugänglich machen (AGPL, Abschnitt 13).
+  Privat im eigenen Homelab, ohne Weitergabe, gibt es keine Pflichten.
+- **Namensnennung:** Zusätzlich nach Abschnitt 7(b) (siehe `NOTICE`): Copyright-Zeilen, `NOTICE`, der Credits-Hinweis
+  hier im README und der Hinweis „© 2026 Zebo0001“ in der Fußzeile der Oberfläche bleiben erhalten. Eigene Hinweise
+  dürfen ergänzt werden.
 
-Drittkomponenten (three.js, Express, better-sqlite3, trimesh, manifold3d u. a.) stehen unter eigenen freizügigen
-Lizenzen. Die PyPI-Metadaten von `pymeshfix` nennen AGPL, die mitgelieferte Lizenzdatei ist GPL-3.0; der
-Quellcode-Zugang ist hier ohnehin gegeben (öffentlicher Ordner). 3D-Modelle (z. B. Figuren aus Cults) haben eigene
-Lizenzen des Künstlers und gehören nicht in dieses Repository. Das ist keine Rechtsberatung.
+Warum AGPL: Der Mesh-Dienst nutzt `pymeshfix` (GPL-3.0; die PyPI-Metadaten nennen teils AGPL). Mit AGPL-3.0 für das
+Gesamtprojekt ist das in beiden Fällen lizenzkonform. Drittkomponenten (three.js, Express, better-sqlite3, trimesh,
+manifold3d u. a.) behalten ihre eigenen, mit der AGPL verträglichen Lizenzen. 3D-Modelle (z. B. Figuren aus Cults) haben
+eigene Lizenzen des Künstlers und gehören nicht in dieses Repository. Das ist keine Rechtsberatung.
 
 ## Stand / Nächste Schritte
 

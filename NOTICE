@@ -1,0 +1,29 @@
+3D Mesh Hub
+Copyright (c) 2026 Zebo0001
+
+Licensed under the GNU Affero General Public License, version 3 or (at your option)
+any later version (see LICENSE). Lizenziert unter der GNU Affero General Public
+License, Version 3 oder (nach Ihrer Wahl) jeder spaeteren Version (siehe LICENSE).
+
+Additional terms under section 7(b) of the GNU AGPL v3 /
+Zusaetzliche Bedingungen nach Abschnitt 7(b) der GNU AGPL v3:
+
+  Reasonable legal notices and author attributions must be preserved: In every
+  version you convey or make available over a network, the notice
+  "(c) 2026 Zebo0001" in the footer of the user interface (Appropriate Legal
+  Notice), the copyright lines in the source files, this NOTICE file and the
+  credit in the README must be kept. You may add your own notices.
+
+  Angemessene Rechtshinweise und Urhebernennungen muessen erhalten bleiben: In
+  jeder Version, die Sie weitergeben oder ueber ein Netzwerk bereitstellen, bleiben
+  der Hinweis "(c) 2026 Zebo0001" in der Fusszeile der Oberflaeche (Appropriate
+  Legal Notice), die Copyright-Zeilen in den Quelldateien, diese NOTICE-Datei und
+  die Nennung im README erhalten. Eigene Hinweise duerfen ergaenzt werden.
+
+Third-party components keep their own licenses (three.js, Express, better-sqlite3,
+trimesh, manifold3d: permissive; pymeshfix: GPL-3.0, compatible with the AGPL v3
+under section 13 of the GPL v3).
+Bibliotheken von Dritten behalten ihre eigenen Lizenzen.
+
+3D models (e.g. figures from Cults) are NOT part of this project and have their
+own licenses from their artists. / 3D-Modelle sind nicht Teil dieses Projekts.

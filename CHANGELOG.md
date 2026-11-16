@@ -3,6 +3,12 @@
 Alle nennenswerten Aenderungen an 3D Mesh Hub werden hier dokumentiert.
 Das Projekt folgt [Semantic Versioning](https://semver.org/lang/de/) (MAJOR.MINOR.PATCH).
 
+## [1.17.1] - 2026-11-16
+
+### Geaendert
+- Mehrere Duebel einer Schnittflaeche liegen jetzt symmetrisch: gleichmaessig verteilt auf der Hauptachse des Querschnitts, symmetrisch um den Schwerpunkt (statt "so weit wie moeglich auseinander").
+- Duenne, gekruemmte Teile (z. B. ein Zopf) bekommen wieder einen Duebel: scheitert die Anpassung mit 3 mm Wand und 6 mm Mindesttiefe, wird mit 1,6 mm Wand und 4 mm Mindesttiefe erneut versucht.
+
 ## [1.17.0] - 2026-11-16
 
 ### Geaendert

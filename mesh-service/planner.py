@@ -420,31 +420,39 @@ def _group_area(g):
 
 
 def _spots(polys, r, count):
-    """Bis zu `count` Duebelmitten im Querschnitt: erste am Punkt mit groesstem Randabstand, weitere moeglichst weit auseinander."""
+    """Duebelmitten im Querschnitt, symmetrisch angeordnet.
+
+    Ein Duebel: Punkt mit groesstem Randabstand. Mehrere: gleichmaessig verteilt auf der Hauptachse des Querschnitts,
+    symmetrisch um dessen Schwerpunkt; so viele wie mit Abstand >= 3,2 r und Wand >= WALL_MM hineinpassen."""
     q0, rmax = _pole(polys)
     if q0 is None:
         return []
-    centers = [np.asarray(q0, dtype=float)]
+    q0 = np.asarray(q0, dtype=float)
     if count <= 1:
-        return centers
+        return [q0]
     allp = np.vstack(polys)
     lo, hi = allp.min(axis=0), allp.max(axis=0)
     step = max(r / 2.0, (hi - lo).max() / 60.0)
-    cand = []
-    for x in np.arange(lo[0], hi[0] + step, step):
-        for y in np.arange(lo[1], hi[1] + step, step):
-            q = np.array([x, y])
-            if _point_in_polys(q, polys) and _dist_edges(q, polys) >= r + WALL_MM:
-                cand.append(q)
-    while len(centers) < count and cand:
-        C = np.array(centers)
-        dmin = [float(np.hypot(*(C - q).T).min()) for q in cand]
-        k = int(np.argmax(dmin))
-        if dmin[k] < 3.2 * r:
-            break
-        centers.append(cand[k])
-        cand.pop(k)
-    return centers
+    pts = [np.array([x, y]) for x in np.arange(lo[0], hi[0] + step, step) for y in np.arange(lo[1], hi[1] + step, step)
+           if _point_in_polys(np.array([x, y]), polys)]
+    if len(pts) < 3:
+        return [q0]
+    P = np.array(pts)
+    c0 = P.mean(axis=0)
+    w, V = np.linalg.eigh(np.cov((P - c0).T))
+    u = V[:, int(np.argmax(w))]
+    t = (P - c0) @ u
+    ext = float(t.max() - t.min())
+    tmid = float(t.min() + t.max()) / 2.0
+    ok = lambda q: _point_in_polys(q, polys) and _dist_edges(q, polys) >= r + WALL_MM
+    for k in range(int(count), 1, -1):
+        s = ext / k
+        while s >= 3.2 * r:
+            cs = [c0 + u * (i - (k - 1) / 2.0) * s for i in range(k)]
+            if all(ok(q) for q in cs):
+                return cs
+            s *= 0.94
+    return [q0]
 
 
 WALL_MM = 3.0           # Mindestwand um ein Loch (seitlich zum Teilrand)
@@ -481,6 +489,14 @@ def _plan_dowels(first, groups, n, d, frame_back, cfg):
 
 
 def _fit_dowel(plan, children, n, d, clearance, sides=None):
+    """Erst mit normaler Wand/Mindesttiefe; scheitert das (duenne, gekruemmte Teile wie ein Zopf), mit knapperen Werten."""
+    out = _fit_dowel_try(plan, children, n, d, clearance, sides, WALL_MM, MIN_DEPTH_MM)
+    if out is None:
+        out = _fit_dowel_try(plan, children, n, d, clearance, sides, 1.6, 4.0)
+    return out
+
+
+def _fit_dowel_try(plan, children, n, d, clearance, sides, wall, min_depth):
     """Passt den Duebel an den tatsaechlichen Platz an: je Teil die Lochtiefe, gemeinsam den Radius.
 
     Pruefkoerper: Zylinder (Loch + Wand) muss ganz im Material liegen. Zuerst Tiefe verkuerzen (bis 6 mm), dann den Radius
@@ -495,11 +511,11 @@ def _fit_dowel(plan, children, n, d, clearance, sides=None):
         return None
     r = plan["radius"]
     while r >= MIN_RADIUS_MM - 1e-9:
-        rt = r + clearance / 2.0 + WALL_MM / 2.0
+        rt = r + clearance / 2.0 + wall / 2.0
         depths = {}
         for side, comps in by_side.items():
             found = None
-            for dep in np.arange(plan["depth"], MIN_DEPTH_MM - 0.01, -2.0):
+            for dep in np.arange(plan["depth"], min_depth - 0.01, -2.0):
                 L = dep + BACK_WALL_MM - 0.3
                 if side == "below":
                     test = _cylinder(c - n * 0.3, n, L, 0.0, rt)

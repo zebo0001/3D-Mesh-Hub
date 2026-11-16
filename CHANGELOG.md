@@ -3,10 +3,21 @@
 Alle nennenswerten Aenderungen an 3D Mesh Hub werden hier dokumentiert.
 Das Projekt folgt [Semantic Versioning](https://semver.org/lang/de/) (MAJOR.MINOR.PATCH).
 
+## [1.18.0] - 2026-11-16
+
+### Neu
+- Druckausrichtung nach Stuetzmaterial: Fuer jedes Teil mit Schnittflaeche werden die moeglichen Lagen (Schnittflaeche unten) bewertet und die mit dem geringsten geschaetzten Support gewaehlt. Bewertung: Projektionsflaeche der Ueberhaenge (>45 Grad) mal Hoehe ueber dem Bett, Bonus fuer Auflageflaeche, Malus fuer Hoehe ueber 300 mm. Bisher wurde immer die natuerliche Hochachse genommen. Abschaltbar mit dem Parameter `orient: "legacy"`.
+- Teile duerfen schraeg um die Hochachse gedreht aufs Bett gelegt werden, wenn sie so passen (konvexe Huelle, Winkel in 2-Grad-Schritten). Beispiel: Oberkoerperhaelfte 311 x 462 x 276 mm liegt gedreht in 409,7 x 406,5 mm.
+- Hinweis, wenn eine deutlich bessere Lage nur mit kleinerem Rand aufs Bett passt ("passt dann nur mit Rand <= 5 mm").
+
+### Hinweis
+- Gewichte der Bewertung sind an einem Vergleich geeicht (Teil liegend 44 g Support, hochkant 165 g bei gleichen Slicer-Einstellungen), sonst ungetestet. Die sichtbare Vorderseite wird noch nicht gesondert geschuetzt.
+
 ## [1.17.2] - 2026-11-16
 
 ### Geaendert
 - Grosse, unregelmaessige Schnittflaechen (z. B. Laengsschnitt durch die Figur) bekommen mehr Duebel: bis zu 8 je zusammenhaengender Flaeche (vorher 5), gleichmaessig entlang der Hauptachse verteilt. Gewaehlt wird die Anordnung (symmetrische Reihe oder gleichmaessig verteilt) mit den meisten Duebeln.
+- Schnitteditor (Vollbild): Button zum Herunterladen der ZIP mit den Teilen.
 
 ## [1.17.1] - 2026-11-16
 

@@ -92,19 +92,101 @@ def _worst_axis(ext, bed):
     return p[i], ratios[i], bed[i]
 
 
-def _pick_perm(ext, bed, faces, up_axis):
-    """Beste Druckausrichtung unter allen passenden: Schnittflaeche unten, natuerliche Richtung, niedrig."""
-    fits = _fitting_perms(ext, bed)
-    if not fits:
-        return None
+def _support_score(oriented):
+    """Grobe Bewertung einer Druckausrichtung (Bett-Z = oben, Unterkante bei 0); kleiner ist besser.
 
+    Naeherung fuer das Stuetzvolumen: Summe ueber alle Flaechen, die mehr als 45 Grad nach unten zeigen und nicht auf dem Bett
+    liegen, von Projektionsflaeche mal Hoehe ueber dem Bett (cm3). Dazu ein Bonus fuer flache Auflageflaeche und ein Malus fuer
+    Hoehe ueber 300 mm (wackelt, lange Stuetzen). Gewichte ungetestet gegen weitere Slicer-Laeufe; Rangfolge an einem Teil
+    (liegend 44 g Support, hochkant 165 g) bestaetigt."""
+    tm = oriented
+    N = tm.face_normals
+    A = tm.area_faces
+    z = tm.triangles_center[:, 2] - float(tm.bounds[0][2])
+    down = -N[:, 2]
+    over = (down > math.cos(math.radians(45))) & (z > 0.6)
+    sup = float((A * down * z)[over].sum()) / 1000.0
+    contact = float(A[(down > 0.98) & (z <= 0.6)].sum()) / 100.0
+    height = float(tm.bounds[1][2] - tm.bounds[0][2])
+    return sup - 2.0 * contact + 4.0 * max(0.0, height - 300.0)
+
+
+def _spin_fit(oriented, bed):
+    """Passt der Grundriss (Projektion auf das Bett) bei Drehung um die Hochachse aufs Bett? Liefert (passt, Winkel in Grad).
+
+    Gesucht wird der Winkel mit der kleinsten Ueberschreitung; 0 Grad wird bevorzugt, wenn es passt."""
+    from scipy.spatial import ConvexHull
+    xy = oriented.vertices[:, :2]
+    try:
+        H = xy[ConvexHull(xy).vertices]
+    except Exception:
+        H = xy
+    best = (float("inf"), 0.0)
+    for deg in [0.0] + [float(a) for a in range(2, 180, 2)]:
+        c, s_ = math.cos(math.radians(deg)), math.sin(math.radians(deg))
+        R = H @ np.array([[c, -s_], [s_, c]])
+        w, d = np.ptp(R[:, 0]), np.ptp(R[:, 1])
+        over = max(w - bed[0], d - bed[1], 0.0)
+        if over < best[0] - 1e-9:
+            best = (over, deg)
+        if over <= 1e-6 and deg == 0.0:
+            break
+    return best[0] <= 1e-6, best[1], best[0]
+
+
+def _spin(mesh, deg):
+    if not deg:
+        return mesh
+    c, s_ = math.cos(math.radians(deg)), math.sin(math.radians(deg))
+    out = mesh.copy()
+    v = out.vertices.copy()
+    out.vertices = np.column_stack([v[:, 0] * c + v[:, 1] * s_, -v[:, 0] * s_ + v[:, 1] * c, v[:, 2]])   # gleicher Drehsinn wie in _spin_fit
+    out.vertices -= out.bounds[0]
+    return out
+
+
+def _pick_perm(ext, bed, faces, up_axis, tm=None, report=None, margin=0.0):
+    """Beste Druckausrichtung: Schnittflaeche unten, passend aufs Bett (auch schraeg gedreht), dann wenig Stuetzmaterial.
+
+    Gibt (Zuordnung, Drehwinkel um die Hochachse in Grad) zurueck. Ohne Netz (tm): wie frueher, achsparallel."""
     def flat_down(p):
         if not faces:
             return True
         return any(a == p[2] for a, _ in faces)
 
+    if tm is not None and faces:
+        cand = {}
+        for p in PERMS:
+            if ext[p[2]] <= bed[2] + 1e-6 and p[2] not in cand and flat_down(p):
+                cand[p[2]] = p
+        res = []
+        miss = []
+        for axis, p in cand.items():
+            try:
+                o = _orient(tm, p, faces)[0]
+                ok, deg, over = _spin_fit(o, bed)
+                sc = _support_score(_spin(o, deg))
+                if ok:
+                    res.append((sc, p, deg))
+                else:
+                    miss.append((sc, over, AXIS_NAMES[p[2]]))
+            except Exception:
+                res = []
+                break
+        if res:
+            if report is not None:
+                report["scores"] = {AXIS_NAMES[p[2]]: round(sc, 1) for sc, p, _ in res}
+            sc, p, deg = min(res, key=lambda r: r[0])
+            if report is not None:
+                for msc, over, ax in miss:
+                    if msc < sc - 200.0 and over <= 2.0 * margin:   # deutlich besser, passt aber nur mit kleinerem Rand
+                        report["near_miss"] = (ax, max(0.0, margin - over / 2.0))
+            return p, deg
+    fits = _fitting_perms(ext, bed)
+    if not fits:
+        return None, 0.0
     fits.sort(key=lambda p: (0 if flat_down(p) else 1, 0 if p[2] == up_axis else 1, ext[p[2]]))
-    return fits[0]
+    return fits[0], 0.0
 
 
 def _orient(mesh, p, faces):
@@ -1019,11 +1101,16 @@ def split_mesh(path, params, progress=None):
             flat, flipped, p = True, False, (0, 1, 2)
             up_orig = "frei"
         else:
-            p = _pick_perm(ext, bed, faces, up)
+            _rep = {}
+            p, spin = _pick_perm(ext, bed, faces, up, tm if str(params.get("orient", "support")) == "support" else None, _rep, margin)
+            if _rep.get("near_miss"):
+                _ax, _m = _rep["near_miss"]
+                warnings.append(f"Ein Teil ({'x'.join(str(round(float(e))) for e in ext)} mm) liesse sich liegend mit deutlich weniger Support drucken, passt dann aber nur mit Rand <= {_m:.0f} mm (jetzt {margin:.0f} mm)")
             fits = p is not None
             if p is None:
                 p = _fallback_perm(ext, bed)
             oriented, flat, flipped = _orient(tm, p, faces)
+            oriented = _spin(oriented, spin)
             up_orig = AXIS_NAMES[p[2]]
         centroid = (lo_v + hi_v) / 2.0
         parts.append({

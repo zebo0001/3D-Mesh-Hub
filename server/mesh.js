@@ -122,7 +122,7 @@ function validateSplitParams(body) {
   const y = num(bed.y, 50, 2000);
   const z = num(bed.z, 50, 2000);
   if (x == null || y == null || z == null) return { error: 'Druckbett: Breite, Tiefe und Hoehe in mm angeben (50 bis 2000)' };
-  const margin = b.margin_mm === undefined || b.margin_mm === '' ? 10 : num(b.margin_mm, 0, 100);
+  const margin = b.margin_mm === undefined || b.margin_mm === '' ? 5 : num(b.margin_mm, 0, 100);
   if (margin == null) return { error: 'Rand: 0 bis 100 mm' };
   const height = num(b.target_height_mm, 10, 10000);
   if (height == null) return { error: 'Zielhoehe: 10 bis 10000 mm' };

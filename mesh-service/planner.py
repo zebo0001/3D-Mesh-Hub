@@ -917,7 +917,7 @@ def split_mesh(path, params, progress=None):
         raise PlanError("Ungueltiger Massstab")
 
     bed_in = params.get("bed") or {}
-    margin = float(params.get("margin_mm", 10))
+    margin = float(params.get("margin_mm", 5))
     bed = [float(bed_in.get(k, 0)) - 2 * margin for k in ("x", "y", "z")]
     if min(bed) < 30:
         raise PlanError("Druckbett abzueglich Rand ist zu klein")

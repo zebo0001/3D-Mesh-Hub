@@ -3,6 +3,11 @@
 Alle nennenswerten Aenderungen an 3D Mesh Hub werden hier dokumentiert.
 Das Projekt folgt [Semantic Versioning](https://semver.org/lang/de/) (MAJOR.MINOR.PATCH).
 
+## [1.18.1] - 2026-11-16
+
+### Geaendert
+- Standard-Rand beim Aufteilen von 10 auf 5 mm (Oberflaeche, Server, Mesh-Dienst). Grund: Der Slicer hat eine 409,7 x 406,5 mm grosse liegende Oberkoerperhaelfte auf dem 420er Bett akzeptiert; 10 mm je Seite waren nur eine Reserve des Planers. Ein bereits im Browser gespeicherter Wert bleibt erhalten.
+
 ## [1.18.0] - 2026-11-16
 
 ### Neu

@@ -729,7 +729,7 @@ return `<div class="split-box"><h4 class="mesh-sub">${t('split.title')}</h4>
 <label>Y (mm)<input type="number" id="sp-by" min="50" max="2000" step="1" value="250"></label>
 <label>Z (mm)<input type="number" id="sp-bz" min="50" max="2000" step="1" value="250"></label>
 </span>
-<label>${t('split.margin')}<input type="number" id="sp-margin" min="0" max="100" step="1" value="10"></label>
+<label>${t('split.margin')}<input type="number" id="sp-margin" min="0" max="100" step="1" value="5"></label>
 <label>${t('split.height')}<input type="number" id="sp-height" min="10" max="10000" step="10" value="1400"></label>
 <label class="vt-check"><input type="checkbox" id="sp-flip"> ${t('split.flip')}</label>
 </div>
@@ -785,7 +785,7 @@ bed = { x: p.x, y: p.z, z: p.h }; // Profil: x = Breite, z = Tiefe, h = Hoehe
 }
 return {
 bed,
-margin_mm: q('sp-margin').value === '' ? 10 : Number(q('sp-margin').value),
+margin_mm: q('sp-margin').value === '' ? 5 : Number(q('sp-margin').value),
 target_height_mm: Number(q('sp-height').value),
 up_flip: q('sp-flip').checked,
 };

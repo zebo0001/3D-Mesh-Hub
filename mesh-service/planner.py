@@ -1578,3 +1578,104 @@ def split_mesh(path, params, progress=None):
         }
         zf.writestr("plan.json", json.dumps(report, ensure_ascii=False, indent=1))
     return zbuf.getvalue(), report
+
+
+# ---------------------------------------------------------------- Positionspruefung fuer einen Schnitt
+
+def probe_cut(path, params, progress=None):
+    """Prueft Positionen rund um einen achsparallelen Schnitt (params["probe"] = {axis, position_mm, index, span, step}).
+
+    Betrachtet das Stueck zwischen den Nachbarschnitten auf derselben Achse (grobes Netz, schnell). Je Position:
+    Konturen der Schnittflaeche, beigelegte Inseln, ob alle Teile aufrecht auf ihrer groessten Schnittflaeche ins Bett passen.
+    Gibt (leeres ZIP, Bericht mit "probe") zurueck."""
+    def say(msg):
+        if progress:
+            progress(msg)
+
+    pr = params.get("probe") or {}
+    axis_name = str(pr.get("axis", "")).lower()
+    if axis_name not in AXIS_NAMES:
+        raise PlanError("Positionspruefung: nur achsparallele Schnitte (x, y, z)")
+    axis = AXIS_NAMES.index(axis_name)
+    p0 = float(pr["position_mm"])
+    span = min(max(float(pr.get("span", 60)), 10.0), 300.0)
+    step = min(max(float(pr.get("step", 2)), 1.0), 50.0)
+    say("Lade Datei")
+    loaded = trimesh.load(path, force="mesh", process=True)
+    if not isinstance(loaded, trimesh.Trimesh) or len(loaded.faces) == 0:
+        raise PlanError("Die Datei enthaelt kein lesbares Dreiecksnetz")
+    if not loaded.is_watertight:
+        raise PlanError("Das Netz ist nicht geschlossen. Bitte zuerst 'Mesh pruefen und reparieren' ausfuehren.")
+    ext0 = loaded.extents
+    up_mode = str(params.get("up_axis", "auto")).lower()
+    up = int(np.argmax(ext0)) if up_mode == "auto" else AXIS_NAMES.index(up_mode)
+    if params.get("target_height_mm"):
+        scale = float(params["target_height_mm"]) / float(ext0[up])
+    else:
+        scale = float(params.get("scale", 1.0))
+    bed_in = params.get("bed") or {}
+    margin = float(params.get("margin_mm", 5))
+    bed = [float(bed_in.get(k, 0)) - 2 * margin for k in ("x", "y", "z")]
+    loaded.apply_scale(scale)
+    loaded.vertices -= loaded.bounds[0]
+    say("Vereinfache")
+    P = _proxy(_to_manifold(loaded))
+    del loaded
+    # Stueck zwischen den Nachbarschnitten
+    others = [float(c["position_mm"]) for i, c in enumerate(params.get("cuts") or [])
+              if str(c.get("axis", "")).lower() == axis_name and i != pr.get("index")]
+    lo_all, hi_all = _bounds(P)
+    lo_n = max([q for q in others if q < p0 - 1.0] + [float(lo_all[axis])])
+    hi_n = min([q for q in others if q > p0 + 1.0] + [float(hi_all[axis])])
+    piece, faces = P, []
+    if lo_n > lo_all[axis] + 0.5:
+        k = [c for c in _split_piece(piece, faces, axis, lo_n) if _bounds(c[0])[0][axis] >= lo_n - 0.5]
+        if k:
+            piece, faces = max(k, key=lambda c: float(c[0].volume()))
+    if hi_n < hi_all[axis] - 0.5:
+        k = [c for c in _split_piece(piece, faces, axis, hi_n) if _bounds(c[0])[1][axis] <= hi_n + 0.5]
+        if k:
+            piece, faces = max(k, key=lambda c: float(c[0].volume()))
+    lo_v, hi_v = _bounds(piece)
+    a, b = max(p0 - span, float(lo_v[axis]) + MIN_PIECE_MM), min(p0 + span, float(hi_v[axis]) - MIN_PIECE_MM)
+    if a >= b:
+        raise PlanError("Positionspruefung: zu wenig Platz zwischen den Nachbarschnitten")
+    cands = sorted({round(float(x), 1) for x in np.arange(math.ceil(a / step) * step, b + 1e-9, step)} | {round(p0, 1)})
+    cands = [c for c in cands if a - 1e-6 <= c <= b + 1e-6]
+    V = _axis_view(piece, axis)
+    rows = []
+    for ci, pos in enumerate(cands):
+        say(f"Pruefe Position {ci + 1} von {len(cands)}")
+        cs = V.slice(float(pos))
+        area, contours, extra = _sec_stats(cs)
+        if area <= 0:
+            continue
+        kids = _split_piece(piece, faces, axis, pos)
+        if len(kids) < 2:
+            continue
+        over = 0.0
+        fits = True
+        for c, f in kids:
+            over += _stand_over(c, f, bed)
+            l, h = _bounds(c)
+            fits = fits and bool(_fitting_perms(h - l, bed))
+        rows.append({
+            "position_mm": pos,
+            "area_cm2": round(area / 100.0, 1),
+            "contours": int(contours),
+            "bundled": int(getattr(kids, "bundled", 0)),
+            "stands": bool(over <= 0.1),   # Netz ist vereinfacht: 0,1 mm Toleranz
+            "over_mm": round(float(over), 1),
+            "fits": bool(fits),
+            "current": abs(pos - p0) < 0.05,
+        })
+    good = [r for r in rows if r["stands"] and r["fits"]]
+    best = min(good, key=lambda r: (r["contours"], r["bundled"], r["area_cm2"] * (1 + 0.002 * abs(r["position_mm"] - p0)))) if good else None
+    if best:
+        best["recommended"] = True
+    report = {"probe": {"axis": axis_name, "index": pr.get("index"), "from_mm": a, "to_mm": b,
+                        "position_mm": p0, "rows": rows, "bed_usable_mm": [round(x, 1) for x in bed]}}
+    zbuf = io.BytesIO()
+    with zipfile.ZipFile(zbuf, "w") as zf:
+        zf.writestr("probe.json", json.dumps(report))
+    return zbuf.getvalue(), report

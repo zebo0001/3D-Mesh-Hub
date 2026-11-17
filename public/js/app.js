@@ -928,6 +928,50 @@ if (!alive()) return;
 const d = ev.target;
 if (d && d.dataset && d.dataset.sec && d.dataset.sec in secOpen) secOpen[d.dataset.sec] = d.open;
 }, true);
+let probeSt = null; // { i, busy, msg, rows, axis }
+const probeHtml = () => {
+if (!probeSt) return '';
+if (probeSt.busy || probeSt.msg) return `<div class="probe-box hint">${escapeHtml(probeSt.msg || '')}</div>`;
+const best = probeSt.rows.find((r) => r.recommended);
+const ok = probeSt.rows.filter((r) => r.stands && r.fits);
+const mark = (r) => (r.stands && r.fits ? '✓' : (r.fits ? t('split.probeTilt') : t('split.probeNoFit')));
+const lines = probeSt.rows.map((r) => `<tr class="${r.recommended ? 'probe-best' : ''} ${r.current ? 'probe-cur' : ''}"><td>${n1(r.position_mm)}${r.current ? ' •' : ''}</td><td>${r.contours}</td><td>${r.bundled}</td><td>${mark(r)}</td><td><button type="button" class="cut-btn" data-act="probe-use" data-pos="${r.position_mm}">${t('split.probeUse')}</button></td></tr>`).join('');
+return `<div class="probe-box"><div class="hint">${best ? t('split.probeBest', { pos: n1(best.position_mm), c: best.contours }) : t('split.probeNone')}${ok.length ? '' : ''}</div>
+<div class="probe-scroll"><table class="mesh-table probe-table"><tr><th>mm</th><th>${t('split.probeCont')}</th><th>${t('split.probeFing')}</th><th></th><th></th></tr>${lines}</table></div>
+<div class="hint">${t('split.probeHint')}</div></div>`;
+};
+const runProbe = async (i) => {
+const c = cutsEdit[i];
+if (!c || !AX.includes(c.axis)) return;
+probeSt = { i, busy: true, msg: t('split.probeRun') };
+renderCuts();
+const input = readInput();
+delete input.max_scale_search; delete input.target_height_mm; delete input.scale;
+if (lastReport && lastReport.scale) input.scale = lastReport.scale; else if (q('sp-scale').value !== '') input.scale = Number(q('sp-scale').value); else input.target_height_mm = Number(q('sp-height').value);
+input.cuts = cutsEdit.filter((x) => AX.includes(x.axis)).map((x) => ({ axis: x.axis, position_mm: Number(x.position_mm) }));
+const idx = cutsEdit.filter((x) => AX.includes(x.axis)).indexOf(c);
+input.probe = { axis: c.axis, position_mm: Number(c.position_mm), index: idx, span: 60, step: 2 };
+input.connectors = readDowel();
+try {
+await api(`/api/files/${f.id}/probe`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input) });
+for (let n = 0; n < 150; n += 1) {
+await new Promise((r) => setTimeout(r, 2000));
+if (!alive() || !probeSt || probeSt.i !== i) return;
+const st = await api(`/api/files/${f.id}/probe`);
+if (st.state === 'error') throw new Error(st.error || 'Fehler');
+if (st.state === 'done' && st.report && st.report.probe) {
+probeSt = { i, rows: st.report.probe.rows || [], axis: c.axis };
+renderCuts();
+return;
+}
+if (st.progress && probeSt.busy) { probeSt.msg = `${t('split.probeRun')} (${st.progress})`; const pb = document.querySelector('.probe-box'); if (pb) pb.textContent = probeSt.msg; }
+}
+throw new Error('Zeitueberschreitung');
+} catch (e) {
+probeSt = { i, msg: String(e.message || e) };
+renderCuts();
+}
+};
 const renderCuts = () => {
 const box = q('sp-cuts');
 if (!box || !cutsEdit) return;
@@ -941,7 +985,7 @@ return `<tr data-i="${i}" class="${i === activeCut ? 'cut-active' : ''}"><td>${i
 <td class="cut-pos"><button type="button" class="cut-btn" data-act="minus" title="${t('split.cutMinus')}">−5</button>
 <input type="number" class="cut-pos-in" step="1" value="${c.position_mm}">
 <button type="button" class="cut-btn" data-act="plus" title="${t('split.cutPlus')}">+5</button>
-<button type="button" class="cut-btn" data-act="pick" title="${t('split.cutPickRow')}">⌖</button></td>
+<button type="button" class="cut-btn" data-act="pick" title="${t('split.cutPickRow')}">⌖</button>${!AX.includes(c.axis) ? '' : `<button type="button" class="cut-btn" data-act="probe" title="${t('split.probeTitle')}">${t('split.probeBtn')}</button>`}</td>
 <td>${range}</td><td><input type="number" class="cut-dw-in" min="0" max="40" step="1" placeholder="${autoD(i)}" value="${c.dowel_mm == null ? '' : c.dowel_mm}" title="${t('split.cutDowelTitle')}"></td><td><button type="button" class="cut-btn" data-act="remove" title="${t('split.cutRemove')}">✕</button></td></tr>`;
 }).join('');
 const parts = lastReport.parts || [];
@@ -950,7 +994,7 @@ box.innerHTML = `<h4 class="mesh-sub">${t('split.cutsTitle')}</h4>
 <div class="hint" id="sp-ed-bedinfo"></div>
 <details class="sp-sec" data-sec="cuts" ${secOpen.cuts ? 'open' : ''}><summary><span>${t('split.cutsTitle')}</span><span class="sp-sum">${cutsEdit.length}</span></summary><div class="sp-sec-body">
 <details class="sp-more"><summary>${t('split.help')}</summary><p class="hint">${t('split.cutsHint')}</p></details>
-<table class="mesh-table"><tr><th>#</th><th>${t('split.cutColAxis')}</th><th>${t('split.cutColPos')}</th><th>${t('split.cutColRange')}</th><th>${t('split.cutColDowel')}</th><th></th></tr>${rows}</table>
+<table class="mesh-table"><tr><th>#</th><th>${t('split.cutColAxis')}</th><th>${t('split.cutColPos')}</th><th>${t('split.cutColRange')}</th><th>${t('split.cutColDowel')}</th><th></th></tr>${rows}</table>${probeHtml()}
 <div class="cut-draw"><button type="button" class="cut-btn cut-line-btn" data-act="line">${t('split.cutLine')}</button>
 <span class="cut-add"><select id="sp-add-axis"><option value="x">X</option><option value="y">Y</option><option value="z">Z</option></select>
 <input type="number" id="sp-add-pos" step="1" placeholder="mm">
@@ -1212,6 +1256,8 @@ activeCut = cutsEdit.length - 1;
 renderCuts();
 drawPlates();
 } else if (b.dataset.act === 'pick' && i >= 0) startLine(i);
+else if (b.dataset.act === 'probe' && i >= 0) runProbe(i);
+else if (b.dataset.act === 'probe-use' && probeSt && probeSt.i >= 0) { const k = probeSt.i; setPos(k, Number(b.dataset.pos)); probeSt = null; renderCuts(); setActive(k); drawPlates(); }
 else if (b.dataset.act === 'line') startLine(-1);
 else if (b.id === 'sp-editor-close') closeEditor();
 else if (b.id === 'sp-recalc') recompute(true);
@@ -1260,7 +1306,7 @@ resultEl.innerHTML = `<div class="hint">${t('split.running')}${st.progress ? ' �
 } else if (st.state === 'done') {
 lastReport = st.report || {};
 const sbx = document.querySelector('.split-box'); if (sbx) sbx.classList.add('has-result');
-cutsEdit = (lastReport.cuts || []).map((c) => ({ axis: c.axis, position_mm: c.position_mm, anchor: c.anchor || null, region_mm: c.region_mm || null, near: c.near || null, normal: c.normal || null, section: c.section || null, size: null, dowel_mm: c.dowel_mm == null ? null : c.dowel_mm }));
+cutsEdit = (lastReport.cuts || []).map((c) => ({ axis: c.axis === 'frei' ? 'free' : c.axis, position_mm: c.position_mm, anchor: c.anchor || null, region_mm: c.region_mm || null, near: c.near || null, normal: c.normal || null, section: c.section || null, size: null, dowel_mm: c.dowel_mm == null ? null : c.dowel_mm }));
 dirty = false;
 activeCut = -1;
 resultEl.innerHTML = reportHtml(lastReport, st.download_url);

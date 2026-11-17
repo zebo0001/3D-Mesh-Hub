@@ -3,6 +3,14 @@
 Alle nennenswerten Aenderungen an 3D Mesh Hub werden hier dokumentiert.
 Das Projekt folgt [Semantic Versioning](https://semver.org/lang/de/) (MAJOR.MINOR.PATCH).
 
+## [1.25.0] - 2026-11-17
+
+### Neu
+- Positionspruefung je Schnitt: In der Schnittliste gibt es bei achsparallelen Schnitten (X/Y/Z) den Button "Pruefen". Er untersucht Positionen im Umkreis von 60 mm in 2-mm-Schritten (grobes Netz, etwa 10 bis 20 s) und zeigt je Position: Zahl der Konturen in der Schnittflaeche (1 = sauber, mehr = Arme/Finger werden mitgeschnitten), lose beigelegte Teile und ob alle Teile aufrecht auf ihrer groessten Schnittflaeche ins Bett passen. Die beste Position ist markiert, "Uebernehmen" setzt sie. Neuer Auftrag `probe` im Mesh-Dienst und `POST/GET /api/files/:id/probe`.
+
+### Behoben
+- Freie Schnitte hiessen im gespeicherten Ergebnis "frei", die Schnittliste erwartete "free": Nach "Neu berechnen" wurden sie als "FREI" angezeigt, und ein weiteres Neuberechnen scheiterte mit "Achse x, y, z oder frei". Die Liste normalisiert den Namen jetzt.
+
 ## [1.24.0] - 2026-11-17
 
 ### Neu

@@ -32,6 +32,7 @@ const ID_RE = /^[a-f0-9]{40}$/;
 const KINDS = {
   repair: { dir: path.join(DATA_DIR, 'repaired'), suffix: '_repariert.stl', jsonSuffix: '_repariert.json' },
   split: { dir: path.join(DATA_DIR, 'split'), suffix: '_teile.zip', jsonSuffix: '_teile.json' },
+  probe: { dir: path.join(DATA_DIR, 'probe'), suffix: '_probe.zip', jsonSuffix: '_probe.json' },
 };
 
 // "<kind>:<fileId>" -> { jobId, state, progress, error, pollFailures }
@@ -155,7 +156,7 @@ function register(app, { db, safeResolve }) {
 
   // Quelle fuer einen Auftrag: beim Aufteilen bevorzugt die reparierte Kopie
   function sourceFor(kind, row) {
-    if (kind === 'split') {
+    if (kind === 'split' || kind === 'probe') {
       const repaired = resultPaths('repair', row.id).file;
       if (fs.existsSync(repaired)) return { abs: repaired, filename: `${path.basename(row.filename, path.extname(row.filename))}.stl`, repaired: true };
     }
@@ -258,7 +259,7 @@ function register(app, { db, safeResolve }) {
 
     const saved = readSavedResult(kind, row.id);
     if (saved) {
-      const url = kind === 'split' ? `/api/files/${row.id}/split/download` : `/api/files/${row.id}/repaired`;
+      const url = kind === 'split' ? `/api/files/${row.id}/split/download` : kind === 'probe' ? '' : `/api/files/${row.id}/repaired`;
       return res.json({ ok: true, state: 'done', report: saved.report, bytes: saved.bytes, download_url: url });
     }
     res.json({ ok: true, state: 'none' });
@@ -305,6 +306,19 @@ function register(app, { db, safeResolve }) {
     return startJob('split', req, res, v.params);
   });
   app.get('/api/files/:id/split', (req, res) => pollJob('split', req, res));
+
+  // ---- Positionspruefung fuer einen Schnitt (Vorschlaege rund um die gewaehlte Position) ----
+  app.post('/api/files/:id/probe', express.json({ limit: '60kb' }), (req, res) => {
+    const v = validateSplitParams(req.body);
+    if (v.error) return res.status(400).json({ ok: false, error: v.error });
+    const pr = (req.body && req.body.probe) || {};
+    const axis = String(pr.axis || '').toLowerCase();
+    const pos = Number(pr.position_mm);
+    if (!['x', 'y', 'z'].includes(axis) || !Number.isFinite(pos)) return res.status(400).json({ ok: false, error: 'Positionspruefung: Achse x, y oder z und Position angeben' });
+    v.params.probe = { axis, position_mm: pos, index: Number.isInteger(pr.index) ? pr.index : null, span: Math.min(300, Math.max(10, Number(pr.span) || 60)), step: Math.min(50, Math.max(1, Number(pr.step) || 2)) };
+    return startJob('probe', req, res, v.params);
+  });
+  app.get('/api/files/:id/probe', (req, res) => pollJob('probe', req, res));
   // Einzelnes Teil in Einbaulage (fuer die Explosionsansicht): <ZIP>/vorschau/Teil-NN.stl
   app.get('/api/files/:id/split/preview/:n', (req, res) => {
     const row = getFileRow(req.params.id);

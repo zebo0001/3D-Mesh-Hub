@@ -198,7 +198,12 @@ def _child_main(src_path, out_path, progress_path, report_path, kind="repair", p
 
     started = time.time()
     try:
-        if kind == "split":
+        if kind == "probe":
+            data, report = planner.probe_cut(src_path, params or {}, progress)
+            progress("Schreibe Ergebnis")
+            with open(out_path, "wb") as fh:
+                fh.write(data)
+        elif kind == "split":
             data, report = planner.split_mesh(src_path, params or {}, progress)
             progress("Schreibe Ergebnis")
             with open(out_path, "wb") as fh:
@@ -227,7 +232,7 @@ def _run_job(job_id, src_path, ext, kind="repair", params=None):
     """Ueberwacht den Reparatur-Prozess (leichter Thread, haelt die GIL nicht)."""
     job = _jobs[job_id]
     job["state"] = "running"
-    out_path = src_path + ("_teile.zip" if kind == "split" else "_repariert.stl")
+    out_path = src_path + ("_teile.zip" if kind in ("split", "probe") else "_repariert.stl")
     progress_path = src_path + ".progress"
     report_path = src_path + ".report.json"
     try:
@@ -302,7 +307,7 @@ async def create_job(model: UploadFile = File(...), modelFilename: str = Form(de
             status_code=400,
             content={"ok": False, "error": f"Format {ext or '?'} wird in dieser Stufe nicht unterstuetzt (STL und OBJ)"},
         )
-    if kind not in ("repair", "split"):
+    if kind not in ("repair", "split", "probe"):
         return JSONResponse(status_code=400, content={"ok": False, "error": f"Unbekannte Auftragsart '{kind}'"})
     try:
         job_params = json.loads(params) if params else {}
@@ -341,6 +346,6 @@ def job_result(job_id: str):
     job = _jobs.get(job_id)
     if not job or job.get("state") != "done":
         raise HTTPException(status_code=404, detail="Ergebnis nicht verfuegbar")
-    if job.get("kind") == "split":
+    if job.get("kind") in ("split", "probe"):
         return FileResponse(job["result_path"], media_type="application/zip", filename="teile.zip")
     return FileResponse(job["result_path"], media_type="model/stl", filename="repariert.stl")

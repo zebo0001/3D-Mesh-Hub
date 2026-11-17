@@ -1,4 +1,4 @@
-import { loadIntoViewer, setUnitScale, setMeasureMode, clearMeasure, setSection, setShading, setModelColor, setView, setBed, BED_PRESETS, setCutPlanes, clearCutPlanes, setCutPickMode, fitCamera, showParts, hideParts, setExplode, highlightPart, showBedPart, hideBedPart } from './viewer.js';
+import { loadIntoViewer, setUnitScale, setMeasureMode, clearMeasure, setSection, setShading, setModelColor, setView, setBed, BED_PRESETS, setCutPlanes, clearCutPlanes, setCutPickMode, fitCamera, showParts, hideParts, setExplode, highlightPart, showBedPart, hideBedPart, setBedBox, clearBedBox } from './viewer.js';
 import { t, getLang, setLang, applyStaticTranslations, localeTag, sortLocale } from './i18n.js';
 
 const gridEl = document.getElementById('grid');
@@ -714,7 +714,8 @@ return `<div class="unit-box ${cls}" id="unit-box"><div class="unit-status">${es
 
 // ---- Mesh-Werkzeuge: Reparatur (optionaler Mesh-Dienst) ----
 function meshBoxHtml() {
-return `<div class="avail-box mesh-box" id="mesh-box" hidden><h3>${t('mesh.tools')}</h3><h4 class="mesh-sub">${t('mesh.title')}</h4><div id="mesh-body"></div>${splitBoxHtml()}</div>`;
+return `<div class="avail-box mesh-box" id="mesh-box" hidden><h3>${t('mesh.tools')}</h3><h4 class="mesh-sub">${t('mesh.title')}</h4><div id="mesh-body"></div>
+<div class="split-launch"><h4 class="mesh-sub">${t('split.title')}</h4><button type="button" class="btn-launch" id="sp-open-editor">${t('split.openEditor')}</button><p class="hint">${t('split.launchHint')}</p></div>${splitBoxHtml()}</div>`;
 }
 
 // ---- Mesh-Werkzeuge: Skalieren und Aufteilen aufs Druckbett ----
@@ -862,6 +863,7 @@ let dirty = false; // Liste wurde seit der letzten Berechnung geaendert: Umrisse
 const dot3 = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
 let lastDownloadUrl = null;
 const drawPlates = () => {
+drawBedBox();
 if (!lastReport || !cutsEdit || !editorOpen) { clearCutPlanes(); return; } // Schnittebenen nur im Schnitteditor
 const o = lastReport.origin_mm;
 const sc = Number(lastReport.scale);
@@ -887,7 +889,8 @@ setCutPlanes(planes, conns);
 const PART_COLORS = ['#e6194b', '#3cb44b', '#4363d8', '#f58231', '#911eb4', '#2bb5b5', '#f032e6', '#bcbd22', '#9a6324', '#800000', '#808000', '#000075', '#e6beff', '#aaffc3'];
 let partsView = false;
 let explode = 0.3;
-const secOpen = { cuts: true, parts: true };
+const secOpen = { cuts: true, box: false, parts: true };
+const boxState = { on: false, ax: null, off: [0, 0, 0] };
 let bedView = false;
 let bedIdx = 0;
 let bedInfo = '';
@@ -944,7 +947,6 @@ return `<tr data-i="${i}" class="${i === activeCut ? 'cut-active' : ''}"><td>${i
 const parts = lastReport.parts || [];
 const partRows = parts.map((p, i) => `<tr data-part="${i}"><td><span class="part-sw" style="background:${PART_COLORS[i % PART_COLORS.length]}"></span>${escapeHtml(p.name)}${p.tiny ? ' ⚠' : ''}</td><td class="${p.fits === false ? 'nofit' : ''}">${p.extents_mm.map(n1).join(' × ')}</td><td>${n1(p.volume_cm3)}</td></tr>`).join('');
 box.innerHTML = `<h4 class="mesh-sub">${t('split.cutsTitle')}</h4>
-<div class="mesh-actions"><button type="button" class="btn-secondary" id="sp-editor">${t('split.cutEditor')}</button></div>
 <div class="hint" id="sp-ed-bedinfo"></div>
 <details class="sp-sec" data-sec="cuts" ${secOpen.cuts ? 'open' : ''}><summary><span>${t('split.cutsTitle')}</span><span class="sp-sum">${cutsEdit.length}</span></summary><div class="sp-sec-body">
 <details class="sp-more"><summary>${t('split.help')}</summary><p class="hint">${t('split.cutsHint')}</p></details>
@@ -953,6 +955,13 @@ box.innerHTML = `<h4 class="mesh-sub">${t('split.cutsTitle')}</h4>
 <span class="cut-add"><select id="sp-add-axis"><option value="x">X</option><option value="y">Y</option><option value="z">Z</option></select>
 <input type="number" id="sp-add-pos" step="1" placeholder="mm">
 <button type="button" class="cut-btn" id="sp-add">${t('split.cutAdd')}</button></span></div>
+</div></details>
+<details class="sp-sec" data-sec="box" ${secOpen.box ? 'open' : ''}><summary><span>${t('split.boxTitle')}</span><span class="sp-sum">${boxState.on ? t('split.boxOn') : t('split.boxOff')}</span></summary><div class="sp-sec-body">
+<label class="vt-check"><input type="checkbox" id="sp-box-on" ${boxState.on ? 'checked' : ''}> ${t('split.boxShow')}</label>
+<label class="box-row">${t('split.boxHeight')} <select id="sp-box-ax">${AX.map((a) => `<option value="${a}" ${(boxState.ax || lastReport.up_axis || 'z') === a ? 'selected' : ''}>${a.toUpperCase()}</option>`).join('')}</select></label>
+${AX.map((a, k) => `<label class="box-row">${t('split.boxOffset', { a: a.toUpperCase() })} <input type="range" id="sp-box-o${a}" min="0" max="${Math.max(1, Math.round(ext[k] || 0))}" step="1" value="${Math.round(boxState.off[k])}"></label>`).join('')}
+<div class="hint" id="sp-box-info"></div>
+<p class="hint">${t('split.boxHint')}</p>
 </div></details>
 <details class="sp-sec" data-sec="parts" ${secOpen.parts ? 'open' : ''}><summary><span>${t('split.secParts')}</span><span class="sp-sum">${parts.length}</span></summary><div class="sp-sec-body">
 <div class="cut-parts-head"><button type="button" class="cut-btn" data-act="parts">${partsView ? t('split.partsHide') : t('split.partsShow')}</button>
@@ -966,6 +975,32 @@ ${bedView ? `<div class="hint">${escapeHtml(bedInfo)}</div>` : ''}
 <button type="button" class="btn-secondary" id="sp-reset">${t('split.cutReset')}</button>
 ${lastDownloadUrl ? `<a class="btn-secondary" id="sp-ed-download" href="${lastDownloadUrl}" download>${t('split.download')}</a>` : ''}</div>`;
 updateBedInfo();
+updateBoxInfo();
+};
+const boxSize = () => {
+  const inp = readInput();
+  const m = inp.margin_mm;
+  const bw = inp.bed.x - 2 * m, bd = inp.bed.y - 2 * m, bh = inp.bed.z - 2 * m; // x, y am Bett, Hoehe
+  const hAx = Math.max(0, AX.indexOf(boxState.ax || (lastReport && lastReport.up_axis) || 'z'));
+  const rest = [0, 1, 2].filter((k) => k !== hAx);
+  const size = [0, 0, 0];
+  size[hAx] = bh; size[rest[0]] = bw; size[rest[1]] = bd;
+  return size;
+};
+// Bauraum-Box: Druckbett-Volumen (abzueglich Rand) als Massstab im Viewer, nur im Schnitteditor
+const drawBedBox = () => {
+  if (!boxState.on || !lastReport || !editorOpen) { clearBedBox(); return; }
+  const o = lastReport.origin_mm;
+  const sc = Number(lastReport.scale);
+  if (!Array.isArray(o) || !(sc > 0)) { clearBedBox(); return; }
+  const size = boxSize();
+  setBedBox({ min: [0, 1, 2].map((k) => o[k] + boxState.off[k] / sc), size: size.map((v) => v / sc) });
+};
+const updateBoxInfo = () => {
+  const el = q('sp-box-info');
+  if (!el || !lastReport) return;
+  const sz = boxSize();
+  el.textContent = t('split.boxInfo', { x: n1(sz[0]), y: n1(sz[1]), z: n1(sz[2]) });
 };
 const updateBedInfo = () => {
 const el = q('sp-ed-bedinfo');
@@ -1061,6 +1096,9 @@ document.body.classList.remove('cut-editor-open');
 pokeResize();
 };
 document.addEventListener('keydown', (ev) => { if (ev.key === 'Escape' && editorOpen && alive()) closeEditor(); });
+document.addEventListener('click', (ev) => {
+if (alive() && !editorOpen && ev.target.closest && ev.target.closest('#sp-open-editor')) openEditor();
+});
 document.addEventListener('click', (ev) => {
 if (editorOpen && alive() && ev.target.closest && ev.target.closest('#sp-editor-close')) closeEditor();
 });
@@ -1175,16 +1213,18 @@ renderCuts();
 drawPlates();
 } else if (b.dataset.act === 'pick' && i >= 0) startLine(i);
 else if (b.dataset.act === 'line') startLine(-1);
-else if (b.id === 'sp-editor') openEditor();
 else if (b.id === 'sp-editor-close') closeEditor();
 else if (b.id === 'sp-recalc') recompute(true);
-else if (b.id === 'sp-reset') recompute(false);
+else if (b.id === 'sp-reset') { if (dirty && !window.confirm(t('split.discardEdits'))) return; recompute(false); }
 });
 document.addEventListener('input', (ev) => {
 if (!alive() || !ev.target.closest || !ev.target.closest('#sp-cuts')) return;
-if (ev.target.id === 'sp-ed-printer') { printerSel.value = ev.target.value; syncCustom(); remember(); dirty = true; leaveParts(); renderCuts(); return; }
-if (['sp-ed-bx', 'sp-ed-by', 'sp-ed-bz'].includes(ev.target.id)) { q(ev.target.id.replace('-ed', '')).value = ev.target.value; remember(); dirty = true; updateBedInfo(); return; }
+if (ev.target.id === 'sp-ed-printer') { printerSel.value = ev.target.value; syncCustom(); remember(); dirty = true; leaveParts(); renderCuts(); drawBedBox(); return; }
+if (['sp-ed-bx', 'sp-ed-by', 'sp-ed-bz'].includes(ev.target.id)) { q(ev.target.id.replace('-ed', '')).value = ev.target.value; remember(); dirty = true; updateBedInfo(); drawBedBox(); updateBoxInfo(); return; }
 if (ev.target.id === 'sp-explode') { explode = Number(ev.target.value); setExplode(explode); return; }
+if (ev.target.id === 'sp-box-on') { boxState.on = ev.target.checked; const sm = document.querySelector('details[data-sec=box] .sp-sum'); if (sm) sm.textContent = t(boxState.on ? 'split.boxOn' : 'split.boxOff'); drawBedBox(); return; }
+if (ev.target.id === 'sp-box-ax') { boxState.ax = ev.target.value; drawBedBox(); updateBoxInfo(); return; }
+if (/^sp-box-o[xyz]$/.test(ev.target.id)) { boxState.off[AX.indexOf(ev.target.id.slice(-1))] = Number(ev.target.value); drawBedBox(); return; }
 if (ev.target.classList.contains('cut-dw-in') && cutsEdit) {
 const i = rowIndex(ev.target);
 if (i >= 0) { cutsEdit[i].dowel_mm = ev.target.value === '' ? null : Number(ev.target.value); dirty = true; }
@@ -1219,6 +1259,7 @@ if (running) {
 resultEl.innerHTML = `<div class="hint">${t('split.running')}${st.progress ? ' – ' + escapeHtml(st.progress) : ''}</div>`;
 } else if (st.state === 'done') {
 lastReport = st.report || {};
+const sbx = document.querySelector('.split-box'); if (sbx) sbx.classList.add('has-result');
 cutsEdit = (lastReport.cuts || []).map((c) => ({ axis: c.axis, position_mm: c.position_mm, anchor: c.anchor || null, region_mm: c.region_mm || null, near: c.near || null, normal: c.normal || null, section: c.section || null, size: null, dowel_mm: c.dowel_mm == null ? null : c.dowel_mm }));
 dirty = false;
 activeCut = -1;

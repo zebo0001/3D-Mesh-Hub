@@ -36,6 +36,9 @@ MIN_PART_CM3 = float(os.environ.get("MIN_PART_CM3", "60"))
 MIN_PART_FRACTION = float(os.environ.get("MIN_PART_FRACTION", "0.03"))
 PART_COST_CM2 = float(os.environ.get("PART_COST_CM2", "80"))
 PROXY_FACES = int(os.environ.get("PROXY_FACES", "40000"))
+# Schnitt durch abstehende Teile (Hand, Arm, Zopf) vermeiden: Nebenkonturen zaehlen mehrfach
+LIMB_WEIGHT = float(os.environ.get("LIMB_WEIGHT", "8"))
+CONTOUR_PENALTY_MM2 = float(os.environ.get("CONTOUR_PENALTY_MM2", "1500"))
 
 AXIS_NAMES = "xyz"
 PERMS = list(itertools.permutations(range(3)))
@@ -227,6 +230,32 @@ def _orient(mesh, p, faces):
 
 # ---------------------------------------------------------------- Schnittsuche
 
+def _sec_stats(cs):
+    """(Gesamtflaeche, Zahl aussenliegender Konturen, Flaeche der Nebenkonturen) eines Querschnitts."""
+    try:
+        polys = cs.to_polygons()
+    except Exception:
+        return float(cs.area()), int(cs.num_contour()), 0.0
+    outer = []
+    for p in polys:
+        a = np.asarray(p, dtype=float)
+        if len(a) < 3:
+            continue
+        sa = 0.5 * float(np.dot(a[:, 0], np.roll(a[:, 1], -1)) - np.dot(a[:, 1], np.roll(a[:, 0], -1)))
+        if sa > 0:
+            outer.append(sa)
+    area = float(cs.area())
+    if not outer:
+        return area, int(cs.num_contour()), 0.0
+    extra = max(0.0, sum(outer) - max(outer))
+    return area, len(outer), extra
+
+
+def _sec_cost(area, n_outer, extra):
+    """Bewertung eines Schnitts (mm2): Flaeche plus Strafe fuer Nebenkonturen (Schnitt durch Hand/Arm/Zopf)."""
+    return area + LIMB_WEIGHT * extra + CONTOUR_PENALTY_MM2 * max(n_outer - 1, 0)
+
+
 def _choose_cut(M, axis, lo, hi, n, limit):
     """Position (Koordinate entlang `axis`) mit kleinem Querschnitt nahe der Idealposition."""
     L = hi - lo
@@ -246,12 +275,11 @@ def _choose_cut(M, axis, lo, hi, n, limit):
     best = None
     for s in np.linspace(a, b, SAMPLES):
         cs = V.slice(float(s))
-        area = float(cs.area())
-        contours = int(cs.num_contour())
+        area, contours, extra = _sec_stats(cs)
         if area <= 0:
             continue
         dist = (s - ideal) / max(w, 1e-9)
-        score = area * (1.0 + 0.15 * max(contours - 1, 0)) * (1.0 + 0.5 * dist * dist)
+        score = _sec_cost(area, contours, extra) * (1.0 + 0.5 * dist * dist)
         if best is None or score < best[0]:
             best = (score, float(s), area, contours)
     if best is None:
@@ -971,11 +999,13 @@ def _neck_candidates(M, ext_min=MIN_PIECE_MM):
             continue
         V = _axis_view(M, axis)
         zs = np.linspace(lo + 0.5, hi - 0.5, 82)
-        A, C = [], []
+        A, C, K = [], [], []
         for z in zs:
             cs = V.slice(float(z))
-            A.append(float(cs.area()) / 100.0)
-            C.append(int(cs.num_contour()))
+            a_, c_, e_ = _sec_stats(cs)
+            A.append(a_ / 100.0)
+            C.append(c_)
+            K.append(_sec_cost(a_, c_, e_) / 100.0)
         A = np.asarray(A)
         cum = np.concatenate([[0.0], np.cumsum((A[1:] + A[:-1]) / 2.0 * np.diff(zs) / 10.0)])
         tot = float(cum[-1]) or 1.0
@@ -988,7 +1018,7 @@ def _neck_candidates(M, ext_min=MIN_PIECE_MM):
             vs = min(cum[i], vol - cum[i])
             if vs < min_v:
                 continue
-            rows.append((A[i] / vs ** (2.0 / 3.0), A[i], float(z), C[i]))
+            rows.append((K[i] / vs ** (2.0 / 3.0), K[i], float(z), C[i]))
         picked = []
         for key in (lambda r: r[0], lambda r: r[1]):
             n_ok = 0
@@ -1026,7 +1056,7 @@ def _smart_cut(M, faces, bed, say=None):
             n_sum += _parts_needed(h - l, bed)
         if n_sum >= n_parent:
             continue
-        cost = n_sum * PART_COST_CM2 + area * (1.0 + 0.15 * max(contours - 1, 0)) + 10.0 * kids.bundled
+        cost = n_sum * PART_COST_CM2 + area + 10.0 * kids.bundled
         if best is None or cost < best[0]:
             best = (cost, axis, pos)
     if best is None:
@@ -1036,7 +1066,7 @@ def _smart_cut(M, faces, bed, say=None):
 
 def _plan_score(report):
     """Kleiner ist besser: Teilezahl, Schnittflaechen, Mini-Teile."""
-    area = sum(float(c.get("area_mm2", 0)) for c in report.get("cuts", [])) / 100.0
+    area = sum(float(c.get("cost_mm2", c.get("area_mm2", 0))) for c in report.get("cuts", [])) / 100.0
     small = sum(1 for p in report.get("parts", []) if p["volume_cm3"] < MIN_PART_CM3)
     return report["part_count"] * PART_COST_CM2 + area + 40.0 * small + (1e6 if not report["checks"]["all_parts_fit"] else 0.0)
 
@@ -1074,7 +1104,7 @@ def split_mesh(path, params, progress=None):
         raise PlanError("Ungueltiger Massstab")
 
     search_note = None
-    if params.get("max_scale_search") and not params.get("_inner") and not params.get("cuts"):
+    if params.get("max_scale_search") and not params.get("_inner") and params.get("cuts") is None:
         base = dict(params, max_scale_search=False, _inner=True, connectors=dict(params.get("connectors") or {}, enabled=False))
         base.pop("target_height_mm", None)
 
@@ -1122,7 +1152,7 @@ def split_mesh(path, params, progress=None):
     strategy = str(params.get("strategy", "auto")).lower()
     if strategy not in ("auto", "legacy", "smart"):
         strategy = "auto"
-    if strategy == "auto" and not params.get("cuts") and not params.get("_inner"):
+    if strategy == "auto" and params.get("cuts") is None and not params.get("_inner"):
         # beide Plaene rechnen und den besseren nehmen (bei Gleichstand der klassische)
         base = dict(params, _inner=True, max_scale_search=False, scale=scale)
         base.pop("target_height_mm", None)
@@ -1190,16 +1220,17 @@ def split_mesh(path, params, progress=None):
             smart = _smart_cut(M, faces, bed) if strategy == "smart" else None
             if smart:
                 axis, pos = smart
-                cs0 = _axis_view(M, axis).slice(float(pos))
-                area, contours = float(cs0.area()), int(cs0.num_contour())
             else:
                 pos, area, contours = _choose_cut(M, axis, lo, hi, n, limit)
+            cs0 = _axis_view(M, axis).slice(float(pos))
+            area, contours, extra_mm2 = _sec_stats(cs0)
             anchor = _interior_point(_axis_view(M, axis).slice(float(pos)))
             cuts.append({
                 "axis": AXIS_NAMES[axis],
                 "position_mm": round(pos, 2),
                 "area_mm2": round(area, 1),
                 "contours": contours,
+                "cost_mm2": round(_sec_cost(area, contours, extra_mm2), 1),
                 "part_extents_mm": [round(float(x), 1) for x in ext],
                 "anchor": anchor,
                 "region_mm": [round(float(x), 2) for x in list(lo_v) + list(hi_v)],

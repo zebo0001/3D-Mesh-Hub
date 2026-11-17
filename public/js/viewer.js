@@ -49,6 +49,7 @@ let measureObjs = [];
 let measureLabelEl = null;
 let modelBox = null;
 let cutPick = null; // Rueckruf im Einzeichnen-Modus
+let bedBoxGroup = null; // Bauraum-Box (Massstab fuer manuelle Schnitte, Kind des Modells)
 let cutGroup = null; // Schnittebenen-Platten (Kind des Modells, erbt dessen Z-up-Drehung)
 const sectionPlane = new THREE.Plane(new THREE.Vector3(1, 0, 0), 0);
 let sectionOn = false;
@@ -194,6 +195,7 @@ function clearCurrent() {
   partsGroup = null;
   partMeshes = [];
   cutGroup = null;
+  bedBoxGroup = null;
   clearLineMarkers();
   cutPick = null;
   if (renderer) renderer.domElement.style.cursor = '';
@@ -697,6 +699,34 @@ export function clearCutPlanes() {
   });
   if (cutGroup.parent) cutGroup.parent.remove(cutGroup);
   cutGroup = null;
+}
+
+export function clearBedBox() {
+  if (!bedBoxGroup) return;
+  bedBoxGroup.traverse((c) => {
+    if (c.geometry) c.geometry.dispose();
+    if (c.material) c.material.dispose();
+  });
+  if (bedBoxGroup.parent) bedBoxGroup.parent.remove(bedBoxGroup);
+  bedBoxGroup = null;
+}
+
+// spec: { min:[x,y,z], size:[sx,sy,sz] } in Dateikoordinaten: Druckbett-Volumen als Drahtquader mit leichter Fuellung
+export function setBedBox(spec) {
+  clearBedBox();
+  if (!currentMesh || !spec || !Array.isArray(spec.min) || !Array.isArray(spec.size)) return;
+  const [x, y, z] = spec.min;
+  const [sx, sy, sz] = spec.size;
+  const geo = new THREE.BoxGeometry(sx, sy, sz);
+  geo.translate(x + sx / 2, y + sy / 2, z + sz / 2);
+  bedBoxGroup = new THREE.Group();
+  const lines = new THREE.LineSegments(new THREE.EdgesGeometry(geo), new THREE.LineBasicMaterial({ color: 0xffb020, depthTest: false }));
+  lines.renderOrder = 5;
+  const fill = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: 0xffb020, transparent: true, opacity: 0.07, depthWrite: false, side: THREE.DoubleSide }));
+  fill.renderOrder = 3;
+  bedBoxGroup.add(lines);
+  bedBoxGroup.add(fill);
+  currentMesh.add(bedBoxGroup);
 }
 
 // planes: [{ axis: 'x'|'y'|'z'|'free', pos (axis: Koordinate, free: Punkt [x,y,z]), normal ('free'),

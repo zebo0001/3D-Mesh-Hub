@@ -3,6 +3,18 @@
 Alle nennenswerten Aenderungen an 3D Mesh Hub werden hier dokumentiert.
 Das Projekt folgt [Semantic Versioning](https://semver.org/lang/de/) (MAJOR.MINOR.PATCH).
 
+## [1.23.0] - 2026-11-17
+
+### Neu
+- "Aufteilen fuer den Druck" ist komplett in den Schnitteditor gewandert. In der Detailansicht gibt es nur noch einen Button "Schnitteditor"; "Mesh pruefen und reparieren" bleibt wo es war. Die Detailansicht ist dadurch deutlich aufgeraeumter.
+- Bauraum-Box: Im Editor kann der nutzbare Bauraum des Druckers (Bett minus Rand) als Box ueber dem Modell eingeblendet werden (Bereich "Bauraum", Achsenwahl, Verschieben), mit Massangabe. So sieht man beim manuellen Schneiden, in welchen Abmessungen die Teile bleiben muessen.
+- Hervorgehobene Buttons im Editor (Neu berechnen, Vorschlag, ZIP).
+- Automatik: Querschnitte mit mehreren getrennten Flaechen (z. B. Arm neben dem Rumpf, Hand auf der Huefte) werden deutlich staerker bestraft. Schnitte laufen dadurch nicht mehr quer durch Gliedmassen; das Bett muss nicht mehr maximal gefuellt werden. Test helen (1000 mm): 3 Teile, Hand bleibt ganz.
+
+### Behoben
+- Eine leere Schnittliste (alle automatischen Schnitte geloescht, danach manuell gesetzt) wurde wie "keine Vorgabe" behandelt und brachte automatische Schnitte zurueck.
+- "Automatischen Vorschlag neu erzeugen" fragt nach, wenn manuelle Aenderungen verworfen wuerden; der Start-Button verschwindet nach dem ersten Ergebnis.
+
 ## [1.22.0] - 2026-11-17
 
 ### Neu

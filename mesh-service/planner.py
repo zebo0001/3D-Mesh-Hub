@@ -841,7 +841,8 @@ def _orient_free(tm, M, faces, bed):
             scored.append((area, o))
     scored.sort(key=lambda t: -t[0])
     best = None
-    for _, o in scored:
+    rank = 0
+    for ri, (_, o) in enumerate(scored):
         R = _rot_to_z(-np.asarray(o))      # o -> -Z (Schnittflaeche unten)
         V = tm.vertices @ R.T
         for deg in range(0, 180, 3):
@@ -855,6 +856,7 @@ def _orient_free(tm, M, faces, bed):
             key = (0 if ratio <= 1 + 1e-9 else 1, ext[0] * ext[1] if ratio <= 1 + 1e-9 else ratio)
             if best is None or key < best[0]:
                 best = (key, R, deg)
+                rank = ri
         if best[0][0] == 0:
             break
     key, R, deg = best
@@ -863,7 +865,7 @@ def _orient_free(tm, M, faces, bed):
     out = tm.copy()
     out.vertices = (tm.vertices @ R.T) @ Rz.T
     out.vertices -= out.bounds[0]
-    return out, key[0] == 0
+    return out, key[0] == 0, rank == 0
 
 
 
@@ -1091,11 +1093,13 @@ def _stand_over(M, faces, bed, tm=None):
     """Wie weit (mm) das Teil aufrecht auf einer Schnittflaeche stehend das Bett ueberragt; 0 = steht und passt.
 
     Ungeschnittene Teile und freie Schnitte zaehlen als in Ordnung (nichts abzulegen / eigene Ausrichtung)."""
-    if not faces or any(f[0] == "n" for f in faces):
+    if not faces:
         return 0.0
     lo_v, hi_v = _bounds(M)
     ext = hi_v - lo_v
     tm = tm if tm is not None else _to_trimesh(M)
+    if any(f[0] == "n" for f in faces):
+        return _stand_over_free(tm, M, faces, bed)
     base = _base_axis(tm, faces)
     axes = [base] if base is not None else []
     if not axes:
@@ -1111,6 +1115,36 @@ def _stand_over(M, faces, bed, tm=None):
         if best is None or over < best:
             best = over
     return float(best)
+
+
+def _stand_over_free(tm, M, faces, bed):
+    """Wie _stand_over, fuer Teile mit schraegen Schnittflaechen: es zaehlt die groesste Schnittflaeche als Auflage."""
+    lo_v, hi_v = _bounds(M)
+    best = None
+    for f in faces:
+        try:
+            if f[0] == "n":
+                _, o, d_out = f
+                o = np.asarray(o, dtype=float)
+                area = float(_slice_free(M, _rot_to_z(o), d_out - 0.05).area())
+            else:
+                a, side = f
+                o = np.zeros(3)
+                o[a] = 1.0 if side == "max" else -1.0
+                at = (hi_v[a] - 0.05) if side == "max" else (lo_v[a] + 0.05)
+                area = float(_axis_view(M, a).slice(float(at)).area())
+        except Exception:
+            continue
+        if best is None or area > best[0]:
+            best = (area, o)
+    if best is None:
+        return 0.0
+    R = _rot_to_z(-best[1])
+    V = np.asarray(tm.vertices) @ R.T
+    height = float(np.ptp(V[:, 2]))
+    if height > bed[2] + 1e-6:
+        return 1000.0 + height - bed[2]
+    return float(_hull_over(_hull_xy_pts(V[:, :2]), bed)[0])
 
 
 def _hull_xy_pts(xy):
@@ -1472,8 +1506,8 @@ def split_mesh(path, params, progress=None):
         ext = hi_v - lo_v
         tm = _to_trimesh(M)
         if any(f[0] == "n" for f in faces):
-            oriented, fits = _orient_free(tm, M, faces, bed)
-            flat, flipped, p = True, False, (0, 1, 2)
+            oriented, fits, on_largest = _orient_free(tm, M, faces, bed)
+            flat, flipped, p = bool(on_largest), False, (0, 1, 2)
             up_orig = "frei"
         else:
             _rep = {}
@@ -1551,7 +1585,7 @@ def split_mesh(path, params, progress=None):
             warnings.append("Schnitt " + ", ".join(str(i) for i in unstable_cuts) + ": trennt ueberstehende Teile (Arme/Fluegel) ab, damit die Teile auf der Schnittflaeche stehen koennen (mit 'Groessten Massstab suchen' findest du den groessten Massstab, der ohne diese Zusatzschnitte auskommt)")
         tilted = sum(1 for r in part_reports if r["fits"] and not r["flat_cut_face_down"] and r["has_cut"])
         if tilted:
-            warnings.append(f"{tilted} Teile muessen gekippt oder liegend gedruckt werden (stehen nicht auf einer Schnittflaeche im Bett) - mit viel Support, ggf. weitere Schnitte oder kleineren Massstab waehlen")
+            warnings.append(f"{tilted} Teile stehen nicht auf ihrer groessten Schnittflaeche im Bett (gekippt, liegend oder auf einer kleinen Flaeche) - mit viel Support, ggf. weitere Schnitte oder kleineren Massstab waehlen")
         report = {
             "scale": round(scale, 5),
             "model_height_mm": round(float(ext0[up]), 2),

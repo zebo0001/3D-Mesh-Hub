@@ -3,6 +3,11 @@
 Alle nennenswerten Aenderungen an 3D Mesh Hub werden hier dokumentiert.
 Das Projekt folgt [Semantic Versioning](https://semver.org/lang/de/) (MAJOR.MINOR.PATCH).
 
+## [1.25.1] - 2026-11-18
+
+### Behoben
+- Teile mit schraegen (freien) Schnittflaechen: Die Stabilitaetspruefung und die Warnung "stehen nicht auf ihrer groessten Schnittflaeche" gelten jetzt auch fuer sie. Vorher wurde bei freien Schnitten nie gewarnt, auch wenn ein Teil auf einer kleinen Flaeche (z. B. Halsstumpf) stand.
+
 ## [1.25.0] - 2026-11-17
 
 ### Neu

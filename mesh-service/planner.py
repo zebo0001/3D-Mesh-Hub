@@ -174,7 +174,10 @@ def _pick_perm(ext, bed, faces, up_axis, tm=None, report=None, margin=0.0):
 
     if tm is not None and faces:
         cand = {}
+        base_ax = _base_axis(tm, faces)
         for p in PERMS:
+            if base_ax is not None and p[2] != base_ax:
+                continue
             if ext[p[2]] <= bed[2] + 1e-6 and p[2] not in cand and flat_down(p):
                 cand[p[2]] = p
         res = []
@@ -1064,6 +1067,90 @@ def _smart_cut(M, faces, bed, say=None):
     return best[1], best[2]
 
 
+def _base_axis(tm, faces):
+    """Achse der groessten Schnittflaeche des Teils (darauf soll es stehen); None ohne Schnittflaechen."""
+    cand = [f for f in faces if f[0] in (0, 1, 2)]
+    if not cand:
+        return None
+    N = tm.face_normals
+    A = tm.area_faces
+    C = tm.triangles_center
+    lo, hi = tm.bounds
+    best = None
+    for a, side in cand:
+        edge = lo[a] if side == "min" else hi[a]
+        sgn = -1.0 if side == "min" else 1.0
+        m = (N[:, a] * sgn > 0.98) & (np.abs(C[:, a] - edge) < 0.5)
+        area = float(A[m].sum())
+        if best is None or area > best[0]:
+            best = (area, a)
+    return best[1]
+
+
+def _stand_over(M, faces, bed, tm=None):
+    """Wie weit (mm) das Teil aufrecht auf einer Schnittflaeche stehend das Bett ueberragt; 0 = steht und passt.
+
+    Ungeschnittene Teile und freie Schnitte zaehlen als in Ordnung (nichts abzulegen / eigene Ausrichtung)."""
+    if not faces or any(f[0] == "n" for f in faces):
+        return 0.0
+    lo_v, hi_v = _bounds(M)
+    ext = hi_v - lo_v
+    tm = tm if tm is not None else _to_trimesh(M)
+    base = _base_axis(tm, faces)
+    axes = [base] if base is not None else []
+    if not axes:
+        return 0.0
+    best = None
+    for a in axes:
+        if ext[a] > bed[2] + 1e-6:
+            over = 1000.0 + float(ext[a] - bed[2])
+        else:
+            o = [i for i in range(3) if i != a]
+            H = _hull_xy_pts(np.asarray(tm.vertices)[:, o])
+            over = _hull_over(H, bed)[0]
+        if best is None or over < best:
+            best = over
+    return float(best)
+
+
+def _hull_xy_pts(xy):
+    from scipy.spatial import ConvexHull
+    try:
+        return xy[ConvexHull(xy).vertices]
+    except Exception:
+        return xy
+
+
+def _stand_cut(M, faces, bed):
+    """Schnitt fuer ein Teil, das nur gekippt ins Bett passt: trennt ueberstehende Teile (Arme, Fluegel) ab, damit der
+    Rest auf der Schnittflaeche stehen kann. Gibt (axis, pos) oder None zurueck."""
+    P = _proxy(M)
+    vol_p = float(P.volume())
+    parent = _stand_over(P, faces, bed)
+    best = None
+    for axis, pos, area, contours in _neck_candidates(P):
+        kids = _split_piece(P, faces, axis, pos)
+        if len(kids) < 2:
+            continue
+        vols = [float(c.volume()) for c, _f in kids]
+        if min(vols) < max(MIN_PART_CM3 * 1000.0, MIN_PART_FRACTION * vol_p):
+            continue
+        bad = 0.0
+        n_sum = 0
+        for c, f in kids:
+            bad += _stand_over(c, f, bed)
+            l, h = _bounds(c)
+            n_sum += _parts_needed(h - l, bed)
+        if bad >= parent - 1e-6:
+            continue
+        cost = bad * 3.0 + n_sum * PART_COST_CM2 + area + 10.0 * kids.bundled
+        if best is None or cost < best[0]:
+            best = (cost, axis, pos)
+    if best is None:
+        return None
+    return best[1], best[2]
+
+
 def _plan_score(report):
     """Kleiner ist besser: Teilezahl, Schnittflaechen, Mini-Teile."""
     area = sum(float(c.get("cost_mm2", c.get("area_mm2", 0))) for c in report.get("cuts", [])) / 100.0
@@ -1201,6 +1288,8 @@ def split_mesh(path, params, progress=None):
     removed_total = 0.0
     manual = params.get("cuts")
     cuts = []
+    stable_on = bool(params.get("stable", True))
+    unstable_cuts = []
     if manual is None:
         work = [(M0, [])]
         done = []
@@ -1208,7 +1297,11 @@ def split_mesh(path, params, progress=None):
             M, faces = work.pop()
             lo_v, hi_v = _bounds(M)
             ext = hi_v - lo_v
-            if _fitting_perms(ext, bed):
+            fits_box = bool(_fitting_perms(ext, bed))
+            unstable = False
+            if fits_box and stable_on and faces:
+                unstable = _stand_over(M, faces, bed) > 1e-6
+            if fits_box and not unstable:
                 done.append((M, faces))
                 continue
             if len(done) + len(work) >= MAX_PARTS:
@@ -1217,7 +1310,15 @@ def split_mesh(path, params, progress=None):
             n = max(2, math.ceil(ratio - 1e-9))
             lo, hi = float(lo_v[axis]), float(hi_v[axis])
             say(f"Schnitt {len(cuts) + 1} ({len(done) + len(work) + 1} Teile)")
-            smart = _smart_cut(M, faces, bed) if strategy == "smart" else None
+            smart = None
+            if unstable:
+                smart = _stand_cut(M, faces, bed)
+                if smart is None:
+                    done.append((M, faces))   # kein sinnvoller Schnitt: gekippt drucken, Warnung folgt
+                    continue
+                unstable_cuts.append(len(cuts) + 1)
+            elif strategy == "smart":
+                smart = _smart_cut(M, faces, bed)
             if smart:
                 axis, pos = smart
             else:
@@ -1393,6 +1494,7 @@ def split_mesh(path, params, progress=None):
             "volume": float(M.volume()),
             "sort": (round(up_sign * float(centroid[up]) / 10.0), float(centroid[0]), float(centroid[2 if up != 2 else 1])),
             "flat_cut_face_down": bool(flat),
+            "has_cut": bool(faces),
             "turned_over": bool(flipped),
             "up_axis_original": up_orig,
             "fits": bool(fits),
@@ -1415,6 +1517,7 @@ def split_mesh(path, params, progress=None):
                 "extents_mm": e,
                 "volume_cm3": round(d["volume"] / 1000.0, 1),
                 "flat_cut_face_down": d["flat_cut_face_down"],
+                "has_cut": d["has_cut"],
                 "up_axis_original": d["up_axis_original"],
                 "tiny": d["volume"] < SPLITTER_MM3,
                 "fits": d["fits"],
@@ -1444,6 +1547,11 @@ def split_mesh(path, params, progress=None):
         if nofit:
             warnings.append(f"{nofit} Teile passen noch nicht aufs Druckbett - weitere Schnitte setzen")
         no_flat = sum(1 for r in part_reports if not r["flat_cut_face_down"])
+        if unstable_cuts:
+            warnings.append("Schnitt " + ", ".join(str(i) for i in unstable_cuts) + ": trennt ueberstehende Teile (Arme/Fluegel) ab, damit die Teile auf der Schnittflaeche stehen koennen (mit 'Groessten Massstab suchen' findest du den groessten Massstab, der ohne diese Zusatzschnitte auskommt)")
+        tilted = sum(1 for r in part_reports if r["fits"] and not r["flat_cut_face_down"] and r["has_cut"])
+        if tilted:
+            warnings.append(f"{tilted} Teile muessen gekippt oder liegend gedruckt werden (stehen nicht auf einer Schnittflaeche im Bett) - mit viel Support, ggf. weitere Schnitte oder kleineren Massstab waehlen")
         report = {
             "scale": round(scale, 5),
             "model_height_mm": round(float(ext0[up]), 2),

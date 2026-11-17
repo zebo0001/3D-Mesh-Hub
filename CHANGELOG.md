@@ -3,6 +3,14 @@
 Alle nennenswerten Aenderungen an 3D Mesh Hub werden hier dokumentiert.
 Das Projekt folgt [Semantic Versioning](https://semver.org/lang/de/) (MAJOR.MINOR.PATCH).
 
+## [1.24.0] - 2026-11-17
+
+### Neu
+- Stabilitaetspruefung beim Schneiden: Ein Teil gilt nur als fertig, wenn es auf seiner groessten Schnittflaeche stehend ins Bett passt (Drehung um die Hochachse erlaubt). Passt es nur gekippt, wird weiter geschnitten (ueberstehende Arme/Fluegel/Teile werden abgetrennt) statt das Teil schraeg oder liegend zu drucken. Abschaltbar mit dem Parameter `stable: false`.
+- Die Druckausrichtung nutzt immer die groesste Schnittflaeche als Auflage.
+- Warnungen im Ergebnis: wenn ein Teil trotzdem gekippt gedruckt werden muss, und welche Schnitte nur wegen der Standfestigkeit entstanden sind.
+- Mit "Groessten Massstab suchen" wird jetzt der groesste Massstab gefunden, bei dem alle Teile stehen koennen.
+
 ## [1.23.0] - 2026-11-17
 
 ### Neu

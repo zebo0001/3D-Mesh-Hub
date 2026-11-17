@@ -27,6 +27,15 @@ SAMPLES = 41
 MAX_DOWELS = int(os.environ.get("MAX_DOWELS", "8"))   # hoechstens so viele Duebel je Schnittflaeche
 MAX_PARTS = int(os.environ.get("MAX_PARTS", "200"))
 SPLITTER_MM3 = 1000.0   # Teile kleiner als 1 cm3 werden als Splitter gemeldet
+# Kleine abgetrennte Inseln (z. B. Spitzen, die die Schnittebene zweimal durchstossen) werden dem Nachbarteil
+# beigelegt statt als eigenes Teil ausgegeben.
+ISLAND_CM3 = float(os.environ.get("ISLAND_CM3", "20"))
+ISLAND_FRACTION = float(os.environ.get("ISLAND_FRACTION", "0.05"))
+# Engstellen-Strategie: kleinste erlaubte Teile und Gewichtung (ein Teil mehr ~ so viele cm2 Schnittflaeche)
+MIN_PART_CM3 = float(os.environ.get("MIN_PART_CM3", "60"))
+MIN_PART_FRACTION = float(os.environ.get("MIN_PART_FRACTION", "0.03"))
+PART_COST_CM2 = float(os.environ.get("PART_COST_CM2", "80"))
+PROXY_FACES = int(os.environ.get("PROXY_FACES", "40000"))
 
 AXIS_NAMES = "xyz"
 PERMS = list(itertools.permutations(range(3)))
@@ -332,12 +341,40 @@ def _dist_to_slice(M, axis, pos, point):
     return best
 
 
+class _Kids(list):
+    """Liste (Teil, Schnittflaechen) plus Zusatzinfos: bundled = Anzahl beigelegter Inseln."""
+    bundled = 0
+
+
+def _bundle_islands(out, sides, vol_parent):
+    """Kleine Inseln einer Seite werden dem naechsten groesseren Teil derselben Seite beigelegt.
+
+    Sie werden zusammen mit ihm gedruckt (alle Schnittflaechen liegen in einer Ebene) und danach einzeln angeklebt.
+    Gibt (neue Liste, neue Seitenliste, Anzahl beigelegt) zurueck."""
+    limit = min(ISLAND_CM3 * 1000.0, ISLAND_FRACTION * float(vol_parent))
+    vols = [float(c.volume()) for c, _f in out]
+    keep, isl = [], []
+    for i in range(len(out)):
+        has_host = any(j != i and sides[j] == sides[i] and vols[j] > limit for j in range(len(out)))
+        (isl if (vols[i] < limit and has_host) else keep).append(i)
+    if not isl:
+        return out, sides, 0
+    items = {i: [out[i][0], out[i][1], sides[i]] for i in keep}
+    cen = {i: np.asarray(out[i][0].to_mesh().vert_properties)[:, :3].mean(axis=0) for i in range(len(out))}
+    for i in isl:
+        hosts = [j for j in keep if sides[j] == sides[i] and vols[j] > limit]
+        j = min(hosts, key=lambda k: float(np.linalg.norm(cen[k] - cen[i])))
+        items[j][0] = items[j][0] + out[i][0]
+    order = sorted(items)
+    return [(items[i][0], items[i][1]) for i in order], [items[i][2] for i in order], len(isl)
+
+
 def _split_piece(M, faces, axis, pos):
     """Teilt ein Stueck an der Ebene; liefert Liste neuer (Manifold, Schnittflaechen)."""
     normal = [0.0, 0.0, 0.0]
     normal[axis] = 1.0
     above, below = M.split_by_plane(normal, pos)
-    out = []
+    out, sides = [], []
     for piece, side in ((below, "max"), (above, "min")):
         if piece.is_empty():
             continue
@@ -350,7 +387,12 @@ def _split_piece(M, faces, axis, pos):
             if abs(touch - pos) < 1e-2:
                 nf.append((axis, side))
             out.append((comp, nf))
-    return out
+            sides.append(side)
+    out, sides, n_b = _bundle_islands(out, sides, M.volume())
+    kids = _Kids(out)
+    kids.bundled = n_b
+    kids.sides = [("below" if sd == "max" else "above") for sd in sides]
+    return kids
 
 
 
@@ -653,6 +695,8 @@ def _connect(first, spec, n, d, children, cfg, report_extra, groups=None, sides=
     groups: nur diese Schnittflaechen verbinden (sonst alle des Querschnitts); sides: Seite je Kind ('below'/'above')."""
     if not cfg.get("enabled"):
         return children, 0.0, [], None
+    if sides is None:
+        sides = getattr(children, "sides", None)
     polys, to3 = _section_polys(first, spec)
     if groups is None:
         groups = _groups(polys)
@@ -890,6 +934,113 @@ def _punch(children, n, d, plan, clearance, sides=None):
     return out, removed
 
 
+# ---------------------------------------------------------------- Engstellen-Strategie (Gliedmassen, Fluegel abtrennen)
+
+def _parts_needed(ext, bed):
+    """Untere Schranke fuer die Zahl der Teile eines Stuecks: Raster aus Bettgroessen (beste Achsenzuordnung)."""
+    best = None
+    for p in PERMS:
+        n = 1
+        for i in range(3):
+            n *= max(1, math.ceil(float(ext[p[i]]) / bed[i] - 1e-9))
+        best = n if best is None else min(best, n)
+    return best
+
+
+def _proxy(M):
+    """Grob vereinfachte Kopie fuer die Kandidatensuche (Schnitte werden danach am Original ausgefuehrt)."""
+    tm = _to_trimesh(M)
+    if len(tm.faces) <= PROXY_FACES * 1.5:
+        return M
+    try:
+        simp = tm.simplify_quadric_decimation(face_count=PROXY_FACES)
+        return _to_manifold(simp)
+    except Exception:
+        return M
+
+
+def _neck_candidates(M, ext_min=MIN_PIECE_MM):
+    """Kandidaten (Achse, Position, Querschnitt cm2, Konturen) an Engstellen: kleiner Querschnitt im Verhaeltnis zum
+    kleineren abgetrennten Volumen. Volumen aus dem Querschnittsprofil (Trapezregel)."""
+    lo_v, hi_v = _bounds(M)
+    vol = float(M.volume()) / 1000.0   # cm3
+    out = []
+    for axis in range(3):
+        lo, hi = float(lo_v[axis]), float(hi_v[axis])
+        if hi - lo < 2 * ext_min + 1:
+            continue
+        V = _axis_view(M, axis)
+        zs = np.linspace(lo + 0.5, hi - 0.5, 82)
+        A, C = [], []
+        for z in zs:
+            cs = V.slice(float(z))
+            A.append(float(cs.area()) / 100.0)
+            C.append(int(cs.num_contour()))
+        A = np.asarray(A)
+        cum = np.concatenate([[0.0], np.cumsum((A[1:] + A[:-1]) / 2.0 * np.diff(zs) / 10.0)])
+        tot = float(cum[-1]) or 1.0
+        cum *= vol / tot
+        min_v = max(MIN_PART_CM3, MIN_PART_FRACTION * vol)
+        rows = []
+        for i, z in enumerate(zs):
+            if z - lo < ext_min or hi - z < ext_min or A[i] <= 0:
+                continue
+            vs = min(cum[i], vol - cum[i])
+            if vs < min_v:
+                continue
+            rows.append((A[i] / vs ** (2.0 / 3.0), A[i], float(z), C[i]))
+        picked = []
+        for key in (lambda r: r[0], lambda r: r[1]):
+            n_ok = 0
+            for r in sorted(rows, key=key):
+                if any(abs(r[2] - q[2]) < 15.0 for q in picked):
+                    continue
+                picked.append(r)
+                n_ok += 1
+                if n_ok >= 5:
+                    break
+        for r in picked:
+            out.append((axis, r[2], r[1], r[3]))
+    return out
+
+
+def _smart_cut(M, faces, bed, say=None):
+    """Bester Schnitt ueber alle Achsen: wenige Teile, kleine Schnittflaeche, keine Mini-Teile.
+
+    Gibt (axis, pos) zurueck oder None, wenn kein Kandidat die geschaetzte Teilezahl senkt (dann klassisch)."""
+    lo_v, hi_v = _bounds(M)
+    n_parent = _parts_needed(hi_v - lo_v, bed)
+    P = _proxy(M)
+    vol_p = float(P.volume())
+    best = None
+    for axis, pos, area, contours in _neck_candidates(P):
+        kids = _split_piece(P, faces, axis, pos)
+        if len(kids) < 2:
+            continue
+        vols = [float(c.volume()) for c, _f in kids]
+        if min(vols) < max(MIN_PART_CM3 * 1000.0, MIN_PART_FRACTION * vol_p):
+            continue
+        n_sum = 0
+        for c, _f in kids:
+            l, h = _bounds(c)
+            n_sum += _parts_needed(h - l, bed)
+        if n_sum >= n_parent:
+            continue
+        cost = n_sum * PART_COST_CM2 + area * (1.0 + 0.15 * max(contours - 1, 0)) + 10.0 * kids.bundled
+        if best is None or cost < best[0]:
+            best = (cost, axis, pos)
+    if best is None:
+        return None
+    return best[1], best[2]
+
+
+def _plan_score(report):
+    """Kleiner ist besser: Teilezahl, Schnittflaechen, Mini-Teile."""
+    area = sum(float(c.get("area_mm2", 0)) for c in report.get("cuts", [])) / 100.0
+    small = sum(1 for p in report.get("parts", []) if p["volume_cm3"] < MIN_PART_CM3)
+    return report["part_count"] * PART_COST_CM2 + area + 40.0 * small + (1e6 if not report["checks"]["all_parts_fit"] else 0.0)
+
+
 def _fallback_perm(ext, bed):
     """Fuer Teile, die nicht passen: Zuordnung mit dem kleinsten Ueberstand."""
     return min(PERMS, key=lambda p: (max(ext[p[i]] / bed[i] for i in range(3)), ext[p[2]]))
@@ -968,6 +1119,35 @@ def split_mesh(path, params, progress=None):
             scale = final
             search_note = f"Groesster Massstab mit {n0} Teilen (gerundet auf 0,05): x{final:.2f}, Hoehe {final * float(ext0[up]):.0f} mm"
 
+    strategy = str(params.get("strategy", "auto")).lower()
+    if strategy not in ("auto", "legacy", "smart"):
+        strategy = "auto"
+    if strategy == "auto" and not params.get("cuts") and not params.get("_inner"):
+        # beide Plaene rechnen und den besseren nehmen (bei Gleichstand der klassische)
+        base = dict(params, _inner=True, max_scale_search=False, scale=scale)
+        base.pop("target_height_mm", None)
+        say("Plan 1: klassisch")
+        d0, r0 = split_mesh(path, dict(base, strategy="legacy"), (lambda m: say("Plan 1: " + m)) if progress else None)
+        say("Plan 2: Engstellen (Gliedmassen/Fluegel)")
+        try:
+            d1, r1 = split_mesh(path, dict(base, strategy="smart"), (lambda m: say("Plan 2: " + m)) if progress else None)
+        except PlanError:
+            d1, r1 = None, None
+        s0 = _plan_score(r0)
+        s1 = _plan_score(r1) if r1 else None
+        use_smart = r1 is not None and s1 < s0 - 1e-6
+        data, rep = (d1, r1) if use_smart else (d0, r0)
+        rep["strategy"] = "smart" if use_smart else "legacy"
+        rep["strategy_compare"] = {
+            "legacy": {"parts": r0["part_count"], "score": round(s0, 1)},
+            "smart": {"parts": r1["part_count"], "score": round(s1, 1)} if r1 else None,
+        }
+        if use_smart:
+            rep["warnings"].insert(0, f"Plan nach Engstellen gewaehlt: {r1['part_count']} statt {r0['part_count']} Teile (Fluegel/Gliedmassen an schmalen Stellen abgetrennt)")
+        if search_note:
+            rep["warnings"].insert(0, search_note)
+        return data, rep
+
     bed_in = params.get("bed") or {}
     margin = float(params.get("margin_mm", 5))
     bed = [float(bed_in.get(k, 0)) - 2 * margin for k in ("x", "y", "z")]
@@ -1007,7 +1187,13 @@ def split_mesh(path, params, progress=None):
             n = max(2, math.ceil(ratio - 1e-9))
             lo, hi = float(lo_v[axis]), float(hi_v[axis])
             say(f"Schnitt {len(cuts) + 1} ({len(done) + len(work) + 1} Teile)")
-            pos, area, contours = _choose_cut(M, axis, lo, hi, n, limit)
+            smart = _smart_cut(M, faces, bed) if strategy == "smart" else None
+            if smart:
+                axis, pos = smart
+                cs0 = _axis_view(M, axis).slice(float(pos))
+                area, contours = float(cs0.area()), int(cs0.num_contour())
+            else:
+                pos, area, contours = _choose_cut(M, axis, lo, hi, n, limit)
             anchor = _interior_point(_axis_view(M, axis).slice(float(pos)))
             cuts.append({
                 "axis": AXIS_NAMES[axis],
@@ -1023,6 +1209,9 @@ def split_mesh(path, params, progress=None):
             kids = _split_piece(M, faces, axis, pos)
             nvec = np.zeros(3)
             nvec[axis] = 1.0
+            nb = getattr(kids, "bundled", 0)
+            if nb:
+                warnings.append(f"Schnitt {len(cuts)}: {nb} kleine Insel(n) dem Nachbarteil beigelegt (zusammen gedruckt, danach ankleben)")
             kids, rem, conns, why = _connect(M, ("axis", axis, pos), nvec, pos, kids, cfg, {"cut": len(cuts)})
             removed_total += rem
             if conns:

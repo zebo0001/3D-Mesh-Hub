@@ -735,6 +735,7 @@ return `<div class="split-box"><h4 class="mesh-sub">${t('split.title')}</h4>
 <label>${t('split.scale')}<input type="number" id="sp-scale" min="0.01" max="1000" step="0.05" placeholder="${t('split.scaleAuto')}"></label>
 <label class="vt-check" title="${t('split.maxScaleTitle')}"><input type="checkbox" id="sp-maxscale"> ${t('split.maxScale')}</label>
 <label class="vt-check"><input type="checkbox" id="sp-flip"> ${t('split.flip')}</label>
+<label title="${t('split.strategyTitle')}">${t('split.strategy')}<select id="sp-strategy"><option value="auto">${t('split.strategyAuto')}</option><option value="smart">${t('split.strategySmart')}</option><option value="legacy">${t('split.strategyLegacy')}</option></select></label>
 </div>
 <div class="split-form">
 <label class="vt-check"><input type="checkbox" id="sp-dw" checked> ${t('split.dowel')}</label>
@@ -766,6 +767,7 @@ if (saved[key] != null && saved[key] !== '') q(id).value = saved[key];
 }
 q('sp-flip').checked = !!saved.flip;
 q('sp-maxscale').checked = !!saved.maxscale;
+if (saved.strategy) q('sp-strategy').value = saved.strategy;
 if (saved.dw != null) q('sp-dw').checked = !!saved.dw;
 for (const [id, key] of [['sp-dw-d', 'dwd'], ['sp-dw-depth', 'dwdepth'], ['sp-dw-clear', 'dwclear']]) {
 if (saved[key] != null && saved[key] !== '') q(id).value = saved[key];
@@ -806,13 +808,14 @@ up_flip: q('sp-flip').checked,
 };
 if (q('sp-scale').value !== '') out.scale = Number(q('sp-scale').value); else out.target_height_mm = Number(q('sp-height').value);
 if (q('sp-maxscale').checked) out.max_scale_search = true;
+if (q('sp-strategy').value !== 'auto') out.strategy = q('sp-strategy').value;
 return out;
 };
 const remember = () => {
 try {
 localStorage.setItem('meshSplit', JSON.stringify({
 printer: printerSel.value, bx: q('sp-bx').value, by: q('sp-by').value, bz: q('sp-bz').value,
-margin: q('sp-margin').value, height: q('sp-height').value, scale: q('sp-scale').value, maxscale: q('sp-maxscale').checked, flip: q('sp-flip').checked,
+margin: q('sp-margin').value, height: q('sp-height').value, scale: q('sp-scale').value, maxscale: q('sp-maxscale').checked, flip: q('sp-flip').checked, strategy: q('sp-strategy').value,
 dw: q('sp-dw').checked, dwd: q('sp-dw-d').value, dwdepth: q('sp-dw-depth').value, dwclear: q('sp-dw-clear').value,
 }));
 } catch { /* Speicher gesperrt: egal */ }

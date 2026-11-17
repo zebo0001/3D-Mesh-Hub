@@ -141,6 +141,7 @@ function validateSplitParams(body) {
   const params = { up_axis: up, up_flip: !!b.up_flip, bed: { x, y, z }, margin_mm: margin };
   if (hasScale) params.scale = scaleF; else params.target_height_mm = height;
   if (b.max_scale_search) params.max_scale_search = true;
+  if (['smart', 'legacy'].includes(b.strategy)) params.strategy = b.strategy;
   params.connectors = { enabled: cn.enabled !== false, clearance_mm: clearance, depth_mm: depth, diameter_mm: diam };
   if (vc.cuts) params.cuts = vc.cuts;
   return { params };

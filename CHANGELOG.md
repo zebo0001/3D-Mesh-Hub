@@ -3,6 +3,16 @@
 Alle nennenswerten Aenderungen an 3D Mesh Hub werden hier dokumentiert.
 Das Projekt folgt [Semantic Versioning](https://semver.org/lang/de/) (MAJOR.MINOR.PATCH).
 
+## [1.22.0] - 2026-11-17
+
+### Neu
+- Schnittplanung nach Engstellen: Der Planer sucht zusaetzlich zur gleichmaessigen Aufteilung Schnitte an schmalen Stellen (Fluegel, Arme, Beine, Gelenke), mit kleinem Querschnitt im Verhaeltnis zum abgetrennten Volumen, mindestens 60 cm3 je Teil und ohne Schnitte quer durch Kopf oder Rumpf. Im Modus "Automatisch" (Standard) werden beide Plaene gerechnet und der mit weniger Teilen und kleineren Schnittflaechen gewaehlt; die Wahl steht in den Hinweisen. Neue Auswahl "Schnittplan" in den Einstellungen (Automatisch / Engstellen / Klassisch). Testmodell full_golden (Figur mit Fluegeln, 1000 mm, 1,5 Mio. Dreiecke): 8 statt 11 Teile.
+- Kleine abgetrennte Inseln (unter 20 cm3 und unter 5 % des Teils, z. B. Spitzen, die die Schnittebene zweimal treffen) werden nicht mehr als eigene Teile ausgegeben, sondern dem benachbarten Teil beigelegt (zusammen gedruckt, danach ankleben). Die Hinweise nennen die Anzahl.
+- Neue Umgebungsvariablen: `ISLAND_CM3`, `ISLAND_FRACTION`, `MIN_PART_CM3`, `MIN_PART_FRACTION`, `PART_COST_CM2`, `PROXY_FACES`.
+
+### Hinweis
+- Der Auto-Modus rechnet zwei Plaene: auf einem 1,5-Mio.-Dreiecke-Modell rund 95 s und etwa 3,5 GB RAM Spitze. Dem Mesh-Dienst-Container mindestens 4 GB geben.
+
 ## [1.21.0] - 2026-11-17
 
 ### Neu

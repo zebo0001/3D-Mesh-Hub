@@ -1205,10 +1205,14 @@ def split_mesh(path, params, progress=None):
             progress(msg)
 
     say("Lade Datei")
-    loaded = trimesh.load(path, force="mesh", process=True)
+    pre = params.get("_mesh")     # intern: schon geladenes (grobes) Netz, z. B. fuer die Massstab-Pruefung
+    if pre is not None:
+        loaded = pre.copy()
+    else:
+        loaded = trimesh.load(path, force="mesh", process=True)
     if not isinstance(loaded, trimesh.Trimesh) or len(loaded.faces) == 0:
         raise PlanError("Die Datei enthaelt kein lesbares Dreiecksnetz")
-    if not loaded.is_watertight:
+    if pre is None and not loaded.is_watertight:
         raise PlanError("Das Netz ist nicht geschlossen. Bitte zuerst 'Mesh prüfen und reparieren' ausfuehren.")
 
     ext0 = loaded.extents
@@ -1586,6 +1590,10 @@ def split_mesh(path, params, progress=None):
         tilted = sum(1 for r in part_reports if r["fits"] and not r["flat_cut_face_down"] and r["has_cut"])
         if tilted:
             warnings.append(f"{tilted} Teile stehen nicht auf ihrer groessten Schnittflaeche im Bett (gekippt, liegend oder auf einer kleinen Flaeche) - mit viel Support, ggf. weitere Schnitte oder kleineren Massstab waehlen")
+        splinters = [r["name"] for r in part_reports
+                     if r["volume_cm3"] < MIN_PART_CM3 or (r["volume_cm3"] < 4 * MIN_PART_CM3 and min(r["extents_mm"]) < 6.0)]
+        if splinters:
+            warnings.append(f"Splitter: {', '.join(splinters)} sind sehr klein (unter {MIN_PART_CM3:.0f} cm3 oder duenner als 6 mm) und lassen sich schlecht drucken und ankleben - Schnitt verschieben oder dem Nachbarteil zuschlagen")
         report = {
             "scale": round(scale, 5),
             "model_height_mm": round(float(ext0[up]), 2),
@@ -1607,6 +1615,7 @@ def split_mesh(path, params, progress=None):
                 "all_parts_fit": bool(all_fit),
                 "volume_sum_diff_fraction": round(diff, 8),
                 "parts_without_flat_face": no_flat,
+                "splinter_parts": splinters,
             },
             "warnings": warnings,
         }
@@ -1628,6 +1637,8 @@ def probe_cut(path, params, progress=None):
 
     pr = params.get("probe") or {}
     axis_name = str(pr.get("axis", "")).lower()
+    if axis_name == "scale":
+        return scale_check(path, params, progress)
     if axis_name not in AXIS_NAMES:
         raise PlanError("Positionspruefung: nur achsparallele Schnitte (x, y, z)")
     axis = AXIS_NAMES.index(axis_name)
@@ -1709,6 +1720,85 @@ def probe_cut(path, params, progress=None):
         best["recommended"] = True
     report = {"probe": {"axis": axis_name, "index": pr.get("index"), "from_mm": a, "to_mm": b,
                         "position_mm": p0, "rows": rows, "bed_usable_mm": [round(x, 1) for x in bed]}}
+    zbuf = io.BytesIO()
+    with zipfile.ZipFile(zbuf, "w") as zf:
+        zf.writestr("probe.json", json.dumps(report))
+    return zbuf.getvalue(), report
+
+
+# ---------------------------------------------------------------- Massstab-Pruefung (Vorschlag eines kleineren Massstabs)
+
+def _scale_scaled_cuts(cuts, f):
+    """Schnittliste fuer einen um den Faktor f geaenderten Massstab (alle Laengen in mm skalieren, Richtungen bleiben)."""
+    out = []
+    for c in cuts or []:
+        c2 = dict(c)
+        if c2.get("position_mm") is not None:
+            c2["position_mm"] = float(c2["position_mm"]) * f
+        for k in ("near", "anchor", "region_mm"):
+            if isinstance(c2.get(k), (list, tuple)):
+                c2[k] = [float(v) * f for v in c2[k]]
+        c2.pop("section", None)
+        out.append(c2)
+    return out
+
+
+def scale_check(path, params, progress=None):
+    """Prueft kleinere Massstaebe (bei Schnittliste: dieselben Schnitte, mitskaliert) und sucht den groessten, bei dem
+    alle Teile ins Bett passen, auf ihrer groessten Schnittflaeche stehen und keine Splitter entstehen.
+
+    Rechnet am groben Netz (schnell). Gibt (leeres ZIP, Bericht mit "probe") zurueck."""
+    def say(msg):
+        if progress:
+            progress(msg)
+
+    say("Lade Datei")
+    loaded = trimesh.load(path, force="mesh", process=True)
+    if not isinstance(loaded, trimesh.Trimesh) or len(loaded.faces) == 0:
+        raise PlanError("Die Datei enthaelt kein lesbares Dreiecksnetz")
+    if not loaded.is_watertight:
+        raise PlanError("Das Netz ist nicht geschlossen. Bitte zuerst 'Mesh pruefen und reparieren' ausfuehren.")
+    ext0 = loaded.extents
+    up_mode = str(params.get("up_axis", "auto")).lower()
+    up = int(np.argmax(ext0)) if up_mode == "auto" else AXIS_NAMES.index(up_mode)
+    s0 = float(params["target_height_mm"]) / float(ext0[up]) if params.get("target_height_mm") else float(params.get("scale", 1.0))
+    say("Vereinfache")
+    tm = _to_trimesh(_proxy(_to_manifold(loaded)))
+    del loaded
+    cuts0 = params.get("cuts")
+    steps = [1.0, 0.99, 0.98, 0.97, 0.96, 0.95, 0.94, 0.93, 0.92, 0.91, 0.90, 0.88, 0.86, 0.84, 0.82, 0.80]
+    rows = []
+    best = None
+    if True:
+        proxy_path = path
+        for k, f in enumerate(steps):
+            say(f"Pruefe Massstab {f * 100:.0f} % ({k + 1} von {len(steps)})")
+            p = dict(params, scale=s0 * f, _inner=True, max_scale_search=False, _mesh=tm)
+            p.pop("target_height_mm", None)
+            p["connectors"] = dict(params.get("connectors") or {}, enabled=False)
+            if cuts0 is not None:
+                p["cuts"] = _scale_scaled_cuts(cuts0, f)
+            else:
+                p["strategy"] = "legacy"
+            try:
+                rep = split_mesh(proxy_path, p)[1]
+            except PlanError as e:
+                rows.append({"factor": f, "scale": round(s0 * f, 5), "height_mm": round(s0 * f * float(ext0[up]), 1), "error": str(e)[:120], "ok": False})
+                continue
+            chk = rep["checks"]
+            fits = bool(chk["all_parts_fit"])
+            flat = all(r["flat_cut_face_down"] for r in rep["parts"] if r.get("has_cut"))
+            spl = list(chk.get("splinter_parts") or [])
+            row = {"factor": f, "scale": round(s0 * f, 5), "height_mm": round(s0 * f * float(ext0[up]), 1), "parts": rep["part_count"],
+                   "fits": fits, "stands": bool(flat), "splinters": len(spl), "ok": bool(fits and flat and not spl)}
+            rows.append(row)
+            if row["ok"] and best is None:
+                best = row
+                row["recommended"] = True
+                if f < 1.0 or True:
+                    break
+    report = {"probe": {"axis": "scale", "rows": rows, "base_scale": round(s0, 5), "base_height_mm": round(s0 * float(ext0[up]), 1),
+                        "has_cuts": cuts0 is not None}}
     zbuf = io.BytesIO()
     with zipfile.ZipFile(zbuf, "w") as zf:
         zf.writestr("probe.json", json.dumps(report))

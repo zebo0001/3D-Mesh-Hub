@@ -3,6 +3,13 @@
 Alle nennenswerten Aenderungen an 3D Mesh Hub werden hier dokumentiert.
 Das Projekt folgt [Semantic Versioning](https://semver.org/lang/de/) (MAJOR.MINOR.PATCH).
 
+## [1.26.0] - 2026-11-18
+
+### Neu
+- Maßstab prüfen: Neuer Button in der Maßstab-Zeile des Ergebnisses. Rechnet dieselben Schnitte (mitskaliert) bei 100 %, 99 %, 98 % ... bis 80 % am groben Netz (etwa 10 s) und schlägt den groessten Maßstab vor, bei dem alle Teile ins Bett passen, auf ihrer groessten Schnittflaeche stehen und keine Splitter entstehen. "Uebernehmen" setzt Maßstab und Schnitte und rechnet mit dem vollen Netz neu. Bei automatischem Plan wird neu geplant.
+- Splitter-Pruefung: Teile unter 60 cm3 (oder duenner als 6 mm und unter 240 cm3) werden gemeldet (Warnung und `checks.splinter_parts`).
+- Mesh-Dienst: Job `probe` mit `probe.axis = "scale"`; `split_mesh` akzeptiert intern ein vorgeladenes Netz (`_mesh`).
+
 ## [1.25.1] - 2026-11-18
 
 ### Behoben

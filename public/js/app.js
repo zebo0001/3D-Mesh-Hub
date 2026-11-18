@@ -822,6 +822,82 @@ dw: q('sp-dw').checked, dwd: q('sp-dw-d').value, dwdepth: q('sp-dw-depth').value
 } catch { /* Speicher gesperrt: egal */ }
 };
 
+let scaleSt = null;
+const scaleBoxHtml = () => {
+if (!scaleSt) return '';
+if (scaleSt.busy || scaleSt.msg) return `<div class="probe-box hint">${escapeHtml(scaleSt.msg || '')}</div>`;
+const rows = scaleSt.rows;
+const rec = rows.find((r) => r.recommended);
+const mark = (r) => (r.error ? escapeHtml(r.error) : [r.fits ? '' : t('split.probeNoFit'), r.stands ? '' : t('split.scaleNotStand'), r.splinters ? t('split.scaleSplint', { n: r.splinters }) : ''].filter(Boolean).join(', ') || '✓');
+const lines = rows.map((r) => `<tr class="${r.recommended ? 'probe-best' : ''}"><td>${n1(r.height_mm)}</td><td>${r.error ? '' : r.parts}</td><td>${mark(r)}</td><td>${r.ok ? `<button type="button" class="cut-btn" data-act="scale-use" data-f="${r.factor}" data-s="${r.scale}">${t('split.probeUse')}</button>` : ''}</td></tr>`).join('');
+return `<div class="probe-box"><div class="hint">${rec ? (rec.factor === 1 ? t('split.scaleOk') : t('split.scaleBest', { h: n1(rec.height_mm), p: Math.round(rec.factor * 100) })) : t('split.scaleNone')}</div>
+<div class="probe-scroll"><table class="mesh-table probe-table"><tr><th>${t('split.scaleColH')}</th><th>${t('split.scaleColN')}</th><th></th><th></th></tr>${lines}</table></div>
+<div class="hint">${t('split.scaleHint')}</div></div>`;
+};
+const showScaleBox = () => { const el = q('sp-scalebox'); if (el) el.innerHTML = scaleBoxHtml(); };
+const runScaleCheck = async () => {
+scaleSt = { busy: true, msg: t('split.probeRun') };
+showScaleBox();
+try {
+const input = readInput();
+delete input.max_scale_search; delete input.target_height_mm; delete input.scale;
+input.scale = lastReport && lastReport.scale ? Number(lastReport.scale) : Number(q('sp-scale').value);
+if (!(input.scale > 0)) input.target_height_mm = Number(q('sp-height').value);
+if (cutsEdit && cutsEdit.length) {
+input.cuts = cutsEdit.map((c) => {
+const o = { axis: c.axis, position_mm: Number(c.position_mm) };
+if (Array.isArray(c.anchor)) o.anchor = c.anchor;
+if (Array.isArray(c.region_mm)) o.region_mm = c.region_mm;
+if (Array.isArray(c.near)) o.near = c.near;
+if (c.dowel_mm != null && Number.isFinite(Number(c.dowel_mm))) o.dowel_mm = Number(c.dowel_mm);
+if (c.axis === 'free' && Array.isArray(c.normal)) o.normal = c.normal;
+return o;
+});
+}
+input.connectors = readDowel();
+input.probe = { axis: 'scale' };
+await api(`/api/files/${f.id}/probe`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input) });
+for (let n = 0; n < 150; n += 1) {
+await new Promise((r) => setTimeout(r, 2000));
+if (!alive() || !scaleSt) return;
+const st = await api(`/api/files/${f.id}/probe`);
+if (st.state === 'error') throw new Error(st.error || 'Fehler');
+if (st.state === 'done' && st.report && st.report.probe && st.report.probe.axis === 'scale') {
+scaleSt = { rows: st.report.probe.rows || [] };
+showScaleBox();
+return;
+}
+if (st.progress && scaleSt.busy) { scaleSt.msg = `${t('split.probeRun')} (${st.progress})`; showScaleBox(); }
+}
+throw new Error('Zeitueberschreitung');
+} catch (e) {
+scaleSt = { msg: String(e.message || e) };
+showScaleBox();
+}
+};
+document.addEventListener('click', (ev) => {
+if (!alive() || !ev.target.closest) return;
+if (ev.target.closest('#sp-scalecheck')) { runScaleCheck(); return; }
+const b = ev.target.closest('[data-act=scale-use]');
+if (!b) return;
+const fct = Number(b.dataset.f);
+const sc = Number(b.dataset.s);
+if (!(sc > 0) || !(fct > 0)) return;
+q('sp-scale').value = String(Math.round(sc * 10000) / 10000);
+q('sp-maxscale').checked = false;
+const hasCuts = cutsEdit && cutsEdit.length && lastReport && lastReport.manual;
+if (hasCuts && fct !== 1) {
+const r2 = (v) => Math.round(v * fct * 100) / 100;
+for (const c of cutsEdit) {
+c.position_mm = r2(Number(c.position_mm));
+for (const k of ['near', 'anchor', 'region_mm']) if (Array.isArray(c[k])) c[k] = c[k].map(r2);
+c.section = null; c.size = null;
+}
+}
+scaleSt = null;
+dirty = true;
+recompute(!!hasCuts);
+});
 const scalePicks = (r) => {
 const sc = Number(r.scale);
 if (!(sc > 0)) return '';
@@ -841,7 +917,8 @@ const e = r.scaled_extents_mm || [];
 const b = r.bed_usable_mm || [];
 return `<div class="mesh-result ${fits ? 'ok' : 'warn'}">${fits ? t('split.done', { n: r.part_count }) : t('split.doneNoFit', { n: r.part_count })}</div>
 
-<div class="scale-line"><b>${t('split.scaleLine', { s: Number(r.scale).toLocaleString(localeTag(), { maximumFractionDigits: 4 }), m: n1(r.model_height_mm), h: n1(Number(r.model_height_mm) * Number(r.scale)) })}</b>${scalePicks(r)}</div>
+<div class="scale-line"><b>${t('split.scaleLine', { s: Number(r.scale).toLocaleString(localeTag(), { maximumFractionDigits: 4 }), m: n1(r.model_height_mm), h: n1(Number(r.model_height_mm) * Number(r.scale)) })}</b>${scalePicks(r)} <button type="button" class="cut-btn" id="sp-scalecheck" title="${t('split.scaleCheckTitle')}">${t('split.scaleCheckBtn')}</button></div>
+<div id="sp-scalebox"></div>
 <details class="sp-more"><summary>${t('split.moreInfo')}</summary>
 <div class="hint">${t('split.facts', { scale: Number(r.scale).toLocaleString(localeTag(), { maximumFractionDigits: 3 }), w: n1(e[0]), h: n1(e[1]), d: n1(e[2]), bw: n1(b[0]), bd: n1(b[1]), bh: n1(b[2]) })}</div>
 ${r.manual ? `<div class="hint">${t('split.cutManual')}</div>` : ''}
@@ -1198,6 +1275,7 @@ document.addEventListener('keydown', (ev) => {
 if (ev.key === 'Escape' && pickBanner && alive()) { ev.stopImmediatePropagation(); endPick(); }
 }, true);
 const recompute = async (withCuts) => {
+scaleSt = null;
 const input = readInput();
 const nums = [input.bed.x, input.bed.y, input.bed.z, input.margin_mm, input.scale ?? input.target_height_mm];
 if (nums.some((v) => !Number.isFinite(v))) { render({ state: 'error', error: t('split.badNumbers') }); return; }

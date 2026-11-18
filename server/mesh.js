@@ -314,6 +314,10 @@ function register(app, { db, safeResolve }) {
     const pr = (req.body && req.body.probe) || {};
     const axis = String(pr.axis || '').toLowerCase();
     const pos = Number(pr.position_mm);
+    if (axis === 'scale') {
+      v.params.probe = { axis };
+      return startJob('probe', req, res, v.params);
+    }
     if (!['x', 'y', 'z'].includes(axis) || !Number.isFinite(pos)) return res.status(400).json({ ok: false, error: 'Positionspruefung: Achse x, y oder z und Position angeben' });
     v.params.probe = { axis, position_mm: pos, index: Number.isInteger(pr.index) ? pr.index : null, span: Math.min(300, Math.max(10, Number(pr.span) || 60)), step: Math.min(50, Math.max(1, Number(pr.step) || 2)) };
     return startJob('probe', req, res, v.params);
